@@ -11,19 +11,24 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion'
 import type {
+  AudioTrackState,
+  CropRect,
   ExportSettings,
   FooterCaptionState,
   HeaderCaptionState,
   LayoutState,
   LogoState,
+  Side,
+  SlotState,
 } from '@/lib/editor/types'
 import CaptionsTab from './tabs/CaptionsTab'
 import LogoTab from './tabs/LogoTab'
 import LayoutTab from './tabs/LayoutTab'
+import AudioTab from './tabs/AudioTab'
 import ExportTab from './tabs/ExportTab'
 import { cn } from '@/lib/utils'
 
-export type InspectorTabId = 'captions' | 'logo' | 'layout' | 'export'
+export type InspectorTabId = 'captions' | 'logo' | 'layout' | 'audio' | 'export'
 
 export interface InspectorProps {
   tab: InspectorTabId
@@ -42,6 +47,14 @@ export interface InspectorProps {
   onLayoutPatch: (p: Partial<LayoutState>) => void
   exportSettings: ExportSettings
   onExportPatch: (p: Partial<ExportSettings>) => void
+  audio: AudioTrackState
+  onAudioPatch: (p: Partial<AudioTrackState>) => void
+  onAudioFile: (f: File) => void
+  onAudioRemove: () => void
+  before: SlotState
+  after: SlotState
+  onCropMode: (side: Side | null) => void
+  onCrop: (side: Side, crop: CropRect | null) => void
   timelineDur: number
   speed: number
   canRender: boolean
@@ -54,6 +67,7 @@ const TABS: { id: InspectorTabId; label: string }[] = [
   { id: 'captions', label: 'Captions' },
   { id: 'logo', label: 'Logo' },
   { id: 'layout', label: 'Layout' },
+  { id: 'audio', label: 'Audio' },
   { id: 'export', label: 'Export' },
 ]
 
@@ -84,7 +98,25 @@ export default function Inspector(props: InspectorProps) {
       onRemove={props.onLogoRemove}
     />
   )
-  const layoutPanel = <LayoutTab layout={props.layout} onPatch={props.onLayoutPatch} />
+  const layoutPanel = (
+    <LayoutTab
+      layout={props.layout}
+      onPatch={props.onLayoutPatch}
+      before={props.before}
+      after={props.after}
+      onCropMode={props.onCropMode}
+      onCrop={props.onCrop}
+    />
+  )
+  const audioPanel = (
+    <AudioTab
+      audio={props.audio}
+      anyVideo={props.anyVideo}
+      onPatch={props.onAudioPatch}
+      onFile={props.onAudioFile}
+      onRemove={props.onAudioRemove}
+    />
+  )
   const exportPanel = (
     <ExportTab
       settings={props.exportSettings}
@@ -107,7 +139,7 @@ export default function Inspector(props: InspectorProps) {
           onValueChange={(v) => onTab(v as InspectorTabId)}
           className="flex h-full min-h-0 flex-col"
         >
-          <TabsList className="grid h-11 w-full shrink-0 grid-cols-4 rounded-none border-b border-line bg-surface-1 p-1">
+          <TabsList className="grid h-11 w-full shrink-0 grid-cols-5 rounded-none border-b border-line bg-surface-1 p-1">
             {TABS.map((t) => (
               <TabsTrigger
                 key={t.id}
@@ -125,6 +157,7 @@ export default function Inspector(props: InspectorProps) {
             <TabsContent value="captions" className="m-0">{captionsPanel}</TabsContent>
             <TabsContent value="logo" className="m-0">{logoPanel}</TabsContent>
             <TabsContent value="layout" className="m-0">{layoutPanel}</TabsContent>
+            <TabsContent value="audio" className="m-0">{audioPanel}</TabsContent>
             <TabsContent value="export" className="m-0">{exportPanel}</TabsContent>
           </div>
         </Tabs>
@@ -155,6 +188,12 @@ export default function Inspector(props: InspectorProps) {
               Layout
             </AccordionTrigger>
             <AccordionContent className="p-0">{layoutPanel}</AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="audio" className="border-line">
+            <AccordionTrigger className="px-4 text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">
+              Audio
+            </AccordionTrigger>
+            <AccordionContent className="p-0">{audioPanel}</AccordionContent>
           </AccordionItem>
           <AccordionItem value="export" className="border-line">
             <AccordionTrigger className="px-4 text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">

@@ -116,7 +116,30 @@ export default function LogoTab({
       <PanelCard className={cn(!logo.url && 'pointer-events-none opacity-40')}>
         <div className="mb-3 flex items-center justify-between">
           <Label>Position</Label>
-          <PositionGrid value={logo.grid} onChange={(v) => onPatch({ grid: v, offsetX: 0, offsetY: 0 })} />
+          <PositionGrid
+            value={logo.pos ? -1 : logo.grid}
+            onChange={(v) => onPatch({ grid: v, offsetX: 0, offsetY: 0, pos: null })}
+          />
+        </div>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          {logo.pos ? (
+            <>
+              <span className="rounded-full border border-after/60 bg-after-dim px-2 py-0.5 font-mono text-[10px] font-medium text-after">
+                Free position
+              </span>
+              <button
+                type="button"
+                onClick={() => onPatch({ pos: null })}
+                className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+              >
+                Reset to grid
+              </button>
+            </>
+          ) : (
+            <span className="font-mono text-[10px] text-ink-3">
+              presets — or drag the logo anywhere on canvas
+            </span>
+          )}
         </div>
         <div className="space-y-4">
           <SliderRow

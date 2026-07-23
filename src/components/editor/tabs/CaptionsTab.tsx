@@ -1,9 +1,11 @@
 /**
- * Captions tab (editor.md §4.1): header + footer caption groups.
+ * Captions tab (editor.md §4.1): header + footer caption groups — text, style,
+ * per-element font size and free-form position reset.
  */
 import type { FooterCaptionState, HeaderCaptionState } from '@/lib/editor/types'
+import { CAPTION_SIZE_PCT, captionFontPct, detailFontPct } from '@/lib/editor/types'
 import { Switch } from '@/components/ui/switch'
-import { ColorSwatches, Label, PanelCard, Segmented } from '../controls'
+import { ColorSwatches, Label, PanelCard, Segmented, SliderRow } from '../controls'
 
 function CaptionGroup({
   title,
@@ -60,10 +62,25 @@ function CaptionGroup({
                 { value: 'L' as const, label: 'L' },
               ]}
               value={caption.style.size}
-              onChange={(v) => onPatch({ style: { ...caption.style, size: v } })}
+              onChange={(v) =>
+                onPatch({
+                  style: { ...caption.style, size: v },
+                  sizePct: CAPTION_SIZE_PCT[v],
+                })
+              }
               className="w-28"
             />
           </div>
+
+          <SliderRow
+            label="Font size"
+            value={Math.round(captionFontPct(caption) * 10) / 10}
+            min={2}
+            max={10}
+            step={0.1}
+            onChange={(v) => onPatch({ sizePct: v })}
+            format={(v) => `${v}% of height`}
+          />
 
           <div className="flex items-center justify-between gap-2">
             <Label>Weight</Label>
@@ -111,8 +128,34 @@ function CaptionGroup({
                 placeholder={detail.placeholder}
                 className="w-full rounded-md border border-line bg-surface-1 px-3 py-2 font-mono text-xs text-ink-2 outline-none transition-colors placeholder:text-ink-3 focus:border-line-strong"
               />
+              <div className="mt-3">
+                <SliderRow
+                  label="Detail size"
+                  value={Math.round(detailFontPct(caption as FooterCaptionState) * 10) / 10}
+                  min={1.2}
+                  max={5}
+                  step={0.1}
+                  onChange={(v) => onPatch({ detailSizePct: v })}
+                  format={(v) => `${v}% of height`}
+                />
+              </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
+            <Label>Placement</Label>
+            {caption.pos ? (
+              <button
+                type="button"
+                onClick={() => onPatch({ pos: null })}
+                className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+              >
+                Reset position
+              </button>
+            ) : (
+              <span className="font-mono text-[10px] text-ink-3">drag on canvas</span>
+            )}
+          </div>
         </div>
       )}
     </PanelCard>

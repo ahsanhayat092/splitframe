@@ -3,8 +3,9 @@
  * per-side fit, Ken Burns for stills.
  */
 import { motion } from 'framer-motion'
-import type { AspectId, FitMode, LayoutState, SplitMode } from '@/lib/editor/types'
-import { ASPECTS } from '@/lib/editor/types'
+import { Crop as CropIcon } from 'lucide-react'
+import type { AspectId, CropRect, FitMode, LayoutState, Side, SlotState, SplitMode } from '@/lib/editor/types'
+import { ASPECTS, badgeFontPct, isFullCrop } from '@/lib/editor/types'
 import { Switch } from '@/components/ui/switch'
 import {
   Select,
@@ -84,9 +85,17 @@ function FitSelect({
 export default function LayoutTab({
   layout,
   onPatch,
+  before,
+  after,
+  onCropMode,
+  onCrop,
 }: {
   layout: LayoutState
   onPatch: (patch: Partial<LayoutState>) => void
+  before?: SlotState
+  after?: SlotState
+  onCropMode?: (side: Side | null) => void
+  onCrop?: (side: Side, crop: CropRect | null) => void
 }) {
   const gapless = layout.mode === 'slider'
   return (
@@ -174,24 +183,119 @@ export default function LayoutTab({
           />
         </div>
         {layout.badges && (
-          <div className="flex gap-2">
-            <input
-              value={layout.beforeLabel}
-              maxLength={12}
-              onChange={(e) => onPatch({ beforeLabel: e.target.value.toUpperCase() })}
-              aria-label="Before label"
-              className="w-1/2 rounded-md border border-before/40 bg-before-dim px-2.5 py-1.5 font-mono text-xs text-before outline-none"
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <input
+                value={layout.beforeLabel}
+                maxLength={12}
+                onChange={(e) => onPatch({ beforeLabel: e.target.value.toUpperCase() })}
+                aria-label="Before label"
+                className="w-1/2 rounded-md border border-before/40 bg-before-dim px-2.5 py-1.5 font-mono text-xs text-before outline-none"
+              />
+              <input
+                value={layout.afterLabel}
+                maxLength={12}
+                onChange={(e) => onPatch({ afterLabel: e.target.value.toUpperCase() })}
+                aria-label="After label"
+                className="w-1/2 rounded-md border border-after/40 bg-after-dim px-2.5 py-1.5 font-mono text-xs text-after outline-none"
+              />
+            </div>
+            <SliderRow
+              label="Before badge size"
+              value={Math.round(badgeFontPct(layout, 'before') * 10) / 10}
+              min={0.8}
+              max={4}
+              step={0.1}
+              onChange={(v) => onPatch({ badgeBeforeSizePct: v })}
+              format={(v) => `${v}% of height`}
             />
-            <input
-              value={layout.afterLabel}
-              maxLength={12}
-              onChange={(e) => onPatch({ afterLabel: e.target.value.toUpperCase() })}
-              aria-label="After label"
-              className="w-1/2 rounded-md border border-after/40 bg-after-dim px-2.5 py-1.5 font-mono text-xs text-after outline-none"
+            <SliderRow
+              label="After badge size"
+              value={Math.round(badgeFontPct(layout, 'after') * 10) / 10}
+              min={0.8}
+              max={4}
+              step={0.1}
+              onChange={(v) => onPatch({ badgeAfterSizePct: v })}
+              format={(v) => `${v}% of height`}
             />
+            <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
+              <Label>Placement</Label>
+              {layout.badgeBeforePos || layout.badgeAfterPos ? (
+                <button
+                  type="button"
+                  onClick={() => onPatch({ badgeBeforePos: null, badgeAfterPos: null })}
+                  className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+                >
+                  Reset positions
+                </button>
+              ) : (
+                <span className="font-mono text-[10px] text-ink-3">drag on canvas</span>
+              )}
+            </div>
           </div>
         )}
       </PanelCard>
+
+      {before && after && onCropMode && (
+        <PanelCard>
+          <Label className="mb-2">Crop</Label>
+          <div className="space-y-2">
+            {(
+              [
+                ['before', before, 'Before'] as const,
+                ['after', after, 'After'] as const,
+              ]
+            ).map(([side, slot, label]) => {
+              const cropped = !isFullCrop(slot.crop)
+              return (
+                <div key={side} className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-sm text-ink-2">
+                    {label}
+                    {cropped && (
+                      <span
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                          side === 'before'
+                            ? 'border-before/60 bg-before-dim text-before'
+                            : 'border-after/60 bg-after-dim text-after',
+                        )}
+                      >
+                        Cropped
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    {cropped && onCrop && (
+                      <button
+                        type="button"
+                        onClick={() => onCrop(side, null)}
+                        className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!slot.media}
+                      onClick={() => onCropMode(side)}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-full border border-line-strong px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3',
+                        !slot.media && 'cursor-not-allowed opacity-40',
+                      )}
+                    >
+                      <CropIcon className="h-3.5 w-3.5" />
+                      {cropped ? 'Re-crop' : 'Crop'}
+                    </button>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
+            Crop is per side and carries into the export.
+          </p>
+        </PanelCard>
+      )}
 
       <PanelCard className="space-y-3">
         <FitSelect label="Fit · before" value={layout.fitBefore} onChange={(v) => onPatch({ fitBefore: v })} />

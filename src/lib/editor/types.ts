@@ -29,12 +29,28 @@ export interface SlotMedia {
   thumbnail: string
 }
 
+/** Free-form on-canvas position, in % of canvas width/height (0..100). */
+export interface PointPct {
+  x: number
+  y: number
+}
+
+/** Source-media crop, as fractions (0..1) of the source width/height. */
+export interface CropRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface SlotState {
   media: SlotMedia | null
   /** Decode / read error message, if any. */
   error: string | null
   /** Hold duration (seconds) when the slot holds a still image. */
   imageDuration: number
+  /** Source crop (fractions of source media); null = full frame. */
+  crop: CropRect | null
   loading: boolean
 }
 
@@ -49,10 +65,19 @@ export interface HeaderCaptionState {
   show: boolean
   text: string
   style: CaptionStyleState
+  /**
+   * Free-form position of the text-block center, % of canvas. null = default
+   * (header pinned to the top bar, footer to the bottom bar).
+   */
+  pos: PointPct | null
+  /** Font size as % of canvas height (WYSIWYG). null = derived from style.size. */
+  sizePct: number | null
 }
 
 export interface FooterCaptionState extends HeaderCaptionState {
   detail: string
+  /** Detail-line font size as % of canvas height. null = default (2.2%). */
+  detailSizePct: number | null
 }
 
 export interface LogoState {
@@ -61,6 +86,11 @@ export interface LogoState {
   name: string | null
   /** 0..8 row-major: 0=TL 1=TC 2=TR 3=ML 4=C 5=MR 6=BL 7=BC 8=BR */
   grid: number
+  /**
+   * Free-form top-left position, % of canvas. null = derive from grid +
+   * offsets (the 9-point presets). Set by dragging on the Stage.
+   */
+  pos: PointPct | null
   /** fine offsets in px @ 1080px-tall canvas baseline, -50..50 */
   offsetX: number
   offsetY: number
@@ -85,6 +115,12 @@ export interface LayoutState {
   badges: boolean
   beforeLabel: string
   afterLabel: string
+  /** Free-form badge top-left positions, % of canvas. null = default corners. */
+  badgeBeforePos: PointPct | null
+  badgeAfterPos: PointPct | null
+  /** Badge font size as % of canvas height. null = default (~1.6%). */
+  badgeBeforeSizePct: number | null
+  badgeAfterSizePct: number | null
   fitBefore: FitMode
   fitAfter: FitMode
   kenBurns: boolean
@@ -99,6 +135,20 @@ export interface ExportSettings {
   durationMode: DurationMode
   customDuration: number
   includeAudio: boolean
+}
+
+export interface AudioTrackState {
+  file: File | null
+  url: string | null
+  name: string | null
+  /** decoded/probed duration in seconds, 0 when unknown */
+  duration: number
+  /** 0..1 */
+  volume: number
+  /** loop the track when it's shorter than the export duration */
+  loop: boolean
+  /** keep the original video audio (L/R pan mix) alongside the music */
+  keepOriginal: boolean
 }
 
 export interface TransportState {
@@ -124,6 +174,8 @@ export const DEFAULT_HEADER: HeaderCaptionState = {
   show: true,
   text: '',
   style: { ...DEFAULT_CAPTION_STYLE },
+  pos: null,
+  sizePct: null,
 }
 
 export const DEFAULT_FOOTER: FooterCaptionState = {
@@ -131,6 +183,9 @@ export const DEFAULT_FOOTER: FooterCaptionState = {
   text: '',
   detail: '',
   style: { ...DEFAULT_CAPTION_STYLE, size: 'S', bold: false },
+  pos: null,
+  sizePct: null,
+  detailSizePct: null,
 }
 
 export const DEFAULT_LOGO: LogoState = {
@@ -138,6 +193,7 @@ export const DEFAULT_LOGO: LogoState = {
   url: null,
   name: null,
   grid: 8,
+  pos: null,
   offsetX: 0,
   offsetY: 0,
   sizePct: 12,
@@ -155,6 +211,10 @@ export const DEFAULT_LAYOUT: LayoutState = {
   badges: true,
   beforeLabel: 'BEFORE',
   afterLabel: 'AFTER',
+  badgeBeforePos: null,
+  badgeAfterPos: null,
+  badgeBeforeSizePct: null,
+  badgeAfterSizePct: null,
   fitBefore: 'cover',
   fitAfter: 'cover',
   kenBurns: false,
@@ -179,14 +239,62 @@ export const DEFAULT_TRANSPORT: TransportState = {
   guides: false,
 }
 
+export const DEFAULT_AUDIO: AudioTrackState = {
+  file: null,
+  url: null,
+  name: null,
+  duration: 0,
+  volume: 0.8,
+  loop: true,
+  keepOriginal: true,
+}
+
 export const EMPTY_SLOT: SlotState = {
   media: null,
   error: null,
   imageDuration: 3,
+  crop: null,
   loading: false,
 }
 
 /* ------------------------------- helpers -------------------------------- */
+
+/** Caption font size as % of canvas height, per S/M/L preset. */
+export const CAPTION_SIZE_PCT: Record<CaptionSize, number> = { S: 3, M: 4.5, L: 6 }
+export const DEFAULT_DETAIL_SIZE_PCT = 2.2
+export const DEFAULT_BADGE_SIZE_PCT = 1.6
+
+/** Effective caption font size (% of canvas height). */
+export function captionFontPct(c: HeaderCaptionState): number {
+  return c.sizePct ?? CAPTION_SIZE_PCT[c.style.size]
+}
+/** Effective footer detail font size (% of canvas height). */
+export function detailFontPct(c: FooterCaptionState): number {
+  return c.detailSizePct ?? DEFAULT_DETAIL_SIZE_PCT
+}
+/** Effective badge font size (% of canvas height). */
+export function badgeFontPct(layout: LayoutState, side: Side): number {
+  const v = side === 'before' ? layout.badgeBeforeSizePct : layout.badgeAfterSizePct
+  return v ?? DEFAULT_BADGE_SIZE_PCT
+}
+
+/** True when the crop covers (essentially) the whole source. */
+export function isFullCrop(c: CropRect | null | undefined): boolean {
+  if (!c) return true
+  return c.x <= 0.001 && c.y <= 0.001 && c.w >= 0.999 && c.h >= 0.999
+}
+
+/** Clamp a crop rect to sane bounds (min 5% of source). */
+export function clampCrop(c: CropRect): CropRect {
+  const w = Math.min(1, Math.max(0.05, c.w))
+  const h = Math.min(1, Math.max(0.05, c.h))
+  return {
+    x: Math.min(1 - w, Math.max(0, c.x)),
+    y: Math.min(1 - h, Math.max(0, c.y)),
+    w,
+    h,
+  }
+}
 
 export const ASPECTS: Record<AspectId, { w: number; h: number; label: string }> = {
   '16:9': { w: 16, h: 9, label: '16:9' },
@@ -310,6 +418,12 @@ export function classifyFile(file: File): MediaKind | null {
   if (['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv'].includes(ext)) return 'video'
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'svg'].includes(ext)) return 'image'
   return null
+}
+
+export function isAudioFile(file: File): boolean {
+  if (file.type.startsWith('audio/')) return true
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  return ['mp3', 'wav', 'm4a', 'ogg', 'oga', 'aac', 'flac', 'opus'].includes(ext)
 }
 
 export const SPEEDS = [0.25, 0.5, 1, 1.5, 2] as const

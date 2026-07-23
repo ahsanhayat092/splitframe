@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, TriangleAlert } from 'lucide-react'
 import type {
+  AudioTrackState,
+  CropRect,
   EditorStatus,
   ExportSettings,
   FooterCaptionState,
@@ -17,6 +19,7 @@ import type {
   TransportState,
 } from '@/lib/editor/types'
 import {
+  DEFAULT_AUDIO,
   DEFAULT_EXPORT,
   DEFAULT_FOOTER,
   DEFAULT_HEADER,
@@ -25,6 +28,7 @@ import {
   DEFAULT_TRANSPORT,
   EMPTY_SLOT,
   classifyFile,
+  isAudioFile,
   previewDims,
   slugify,
   timelineDuration,
@@ -73,6 +77,13 @@ function triggerDownload(url: string, filename: string) {
   a.remove()
 }
 
+/** Where the music track should be at output-time `t` (seconds). */
+function musicTimeAt(t: number, dur: number, loop: boolean): number {
+  if (dur <= 0) return 0
+  if (loop) return t % dur
+  return Math.min(t, Math.max(0, dur - 0.05))
+}
+
 export default function Editor() {
   /* ------------------------------- state -------------------------------- */
   const [before, setBefore] = useState<SlotState>(EMPTY_SLOT)
@@ -82,6 +93,8 @@ export default function Editor() {
   const [logo, setLogo] = useState<LogoState>(DEFAULT_LOGO)
   const [layout, setLayout] = useState<LayoutState>(DEFAULT_LAYOUT)
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT)
+  const [audio, setAudio] = useState<AudioTrackState>(DEFAULT_AUDIO)
+  const [cropMode, setCropMode] = useState<Side | null>(null)
   const [transport, setTransport] = useState<TransportState>(DEFAULT_TRANSPORT)
   const [projectName, setProjectName] = useState('untitled-comparison')
   const [status, setStatus] = useState<EditorStatus>('ready')
@@ -96,6 +109,7 @@ export default function Editor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderPreviewRef = useRef<HTMLCanvasElement | null>(null)
   const videoPoolRef = useRef<HTMLDivElement | null>(null)
+  const musicPreviewRef = useRef<HTMLAudioElement | null>(null)
   const timeRef = useRef(0)
   const cancelRef = useRef(false)
   const toastId = useRef(0)
@@ -107,9 +121,9 @@ export default function Editor() {
   const dims = previewDims(layout.aspect)
 
   // latest-state mirror for the rAF loop & imperative handlers
-  const stateRef = useRef({ before, after, header, footer, logo, layout, exportSettings, transport })
+  const stateRef = useRef({ before, after, header, footer, logo, layout, exportSettings, audio, cropMode, transport })
   useEffect(() => {
-    stateRef.current = { before, after, header, footer, logo, layout, exportSettings, transport }
+    stateRef.current = { before, after, header, footer, logo, layout, exportSettings, audio, cropMode, transport }
   })
   const timelineDurRef = useRef(timelineDur)
   useEffect(() => {
@@ -123,6 +137,7 @@ export default function Editor() {
     header: s.header,
     footer: s.footer,
     logo: s.logo,
+    cropEditing: s.cropMode,
   })
 
   /* ------------------------------- toasts ------------------------------- */
@@ -151,7 +166,8 @@ export default function Editor() {
         const media = await loadSlotMedia(file, kind)
         const prev = stateRef.current[side]
         disposeSlotMedia(prev.media)
-        setSlot(side, { media, loading: false, error: null })
+        setSlot(side, { media, loading: false, error: null, crop: null })
+        setCropMode((m) => (m === side ? null : m))
         timeRef.current = 0
         setTransport((t) => ({ ...t, time: 0, playing: false }))
       } catch (e) {
@@ -168,6 +184,7 @@ export default function Editor() {
     const prev = stateRef.current[side]
     disposeSlotMedia(prev.media)
     setSlot(side, { ...EMPTY_SLOT, imageDuration: prev.imageDuration })
+    setCropMode((m) => (m === side ? null : m))
     timeRef.current = 0
     setTransport((t) => ({ ...t, time: 0, playing: false }))
   }, [])
@@ -176,7 +193,56 @@ export default function Editor() {
     const { before: b, after: a } = stateRef.current
     setBefore(a)
     setAfter(b)
+    setCropMode(null)
   }, [])
+
+  /* ---------------------------- crop actions ---------------------------- */
+  const onCropMode = useCallback((side: Side | null) => {
+    if (side) setTransport((t) => ({ ...t, playing: false }))
+    setCropMode(side)
+  }, [])
+
+  const onCrop = useCallback((side: Side, crop: CropRect | null) => {
+    setSlot(side, { crop })
+  }, [])
+
+  /* ---------------------------- audio actions --------------------------- */
+  const onAudioFile = useCallback(
+    (file: File) => {
+      if (!isAudioFile(file)) {
+        pushToast('Audio must be MP3, WAV, M4A or OGG.')
+        return
+      }
+      const url = URL.createObjectURL(file)
+      // probe duration with a throwaway element
+      const probe = document.createElement('audio')
+      probe.preload = 'metadata'
+      probe.onloadedmetadata = () => {
+        const duration = Number.isFinite(probe.duration) ? probe.duration : 0
+        const prev = stateRef.current.audio
+        if (prev.url) URL.revokeObjectURL(prev.url)
+        setAudio((a) => ({ ...a, file, url, name: file.name, duration }))
+        probe.removeAttribute('src')
+      }
+      probe.onerror = () => {
+        URL.revokeObjectURL(url)
+        pushToast("Couldn't decode that audio file.")
+      }
+      probe.src = url
+    },
+    [pushToast],
+  )
+
+  const onAudioRemove = useCallback(() => {
+    const prev = stateRef.current.audio
+    if (prev.url) URL.revokeObjectURL(prev.url)
+    setAudio((a) => ({ ...DEFAULT_AUDIO, volume: a.volume, loop: a.loop, keepOriginal: a.keepOriginal }))
+  }, [])
+
+  const onAudioPatch = useCallback(
+    (p: Partial<AudioTrackState>) => setAudio((a) => ({ ...a, ...p })),
+    [],
+  )
 
   const onImageDuration = useCallback((side: Side, sec: number) => {
     setSlot(side, { imageDuration: sec })
@@ -237,6 +303,27 @@ export default function Editor() {
     }
   }, [before, after, transport.muted, transport.speed, transport.loop])
 
+  // music preview element lifecycle + property sync
+  useEffect(() => {
+    const el = musicPreviewRef.current
+    if (!el) return
+    if (audio.url) {
+      if (el.src !== audio.url) el.src = audio.url
+    } else {
+      el.pause()
+      el.removeAttribute('src')
+      el.load()
+    }
+  }, [audio.url])
+
+  useEffect(() => {
+    const el = musicPreviewRef.current
+    if (!el) return
+    el.volume = Math.min(1, Math.max(0, audio.volume))
+    el.loop = audio.loop
+    el.muted = transport.muted
+  }, [audio.volume, audio.loop, transport.muted])
+
   // play / pause side effects
   useEffect(() => {
     const s = stateRef.current
@@ -253,6 +340,23 @@ export default function Editor() {
         } else {
           v.pause()
         }
+      }
+    }
+    const musicEl = musicPreviewRef.current
+    if (musicEl && s.audio.url) {
+      if (transport.playing) {
+        try {
+          musicEl.currentTime = musicTimeAt(
+            timeRef.current / s.transport.speed,
+            s.audio.duration,
+            s.audio.loop,
+          )
+        } catch {
+          /* noop */
+        }
+        void musicEl.play().catch(() => undefined)
+      } else {
+        musicEl.pause()
       }
     }
   }, [transport.playing])
@@ -293,6 +397,23 @@ export default function Editor() {
             }
           }
         }
+        // drift-correct the music preview (plays at 1× like in the export)
+        const musicEl = musicPreviewRef.current
+        if (musicEl && s.audio.url && s.audio.duration > 0) {
+          const outT = timeRef.current / s.transport.speed
+          if (!s.audio.loop && outT >= s.audio.duration) {
+            if (!musicEl.paused) musicEl.pause()
+          } else {
+            const expected = musicTimeAt(outT, s.audio.duration, s.audio.loop)
+            if (Math.abs(musicEl.currentTime - expected) > 0.3) {
+              try {
+                musicEl.currentTime = expected
+              } catch {
+                /* noop */
+              }
+            }
+          }
+        }
       }
       const canvas = canvasRef.current
       if (canvas) {
@@ -323,6 +444,7 @@ export default function Editor() {
       disposeSlotMedia(s.before.media)
       disposeSlotMedia(s.after.media)
       if (s.logo.url) URL.revokeObjectURL(s.logo.url)
+      if (s.audio.url) URL.revokeObjectURL(s.audio.url)
     },
     [],
   )
@@ -351,6 +473,14 @@ export default function Editor() {
         } catch {
           /* noop */
         }
+      }
+    }
+    const musicEl = musicPreviewRef.current
+    if (musicEl && s.audio.url) {
+      try {
+        musicEl.currentTime = musicTimeAt(t / s.transport.speed, s.audio.duration, s.audio.loop)
+      } catch {
+        /* noop */
       }
     }
   }, [])
@@ -433,6 +563,7 @@ export default function Editor() {
     const s = stateRef.current
     if (!s.before.media || !s.after.media) return
     cancelRef.current = false
+    setCropMode(null)
     setTransport((t) => ({ ...t, playing: false }))
     setStatus('rendering')
     setRender({ ...IDLE_RENDER, open: true, phase: 'rendering', phaseLabel: 'Preparing…' })
@@ -442,11 +573,19 @@ export default function Editor() {
     const filename = `splitframe-${slugify(projectName)}.${settings.format}`
 
     exportVideo({
-      source: frameSource(s),
+      source: { ...frameSource(s), cropEditing: null },
       settings,
       timelineDur: dur,
       speed: s.transport.speed,
       loop: s.transport.loop,
+      music: s.audio.file
+        ? {
+            file: s.audio.file,
+            volume: s.audio.volume,
+            loop: s.audio.loop,
+            keepOriginal: s.audio.keepOriginal,
+          }
+        : null,
       onProgress: (pct, phaseLabel) =>
         setRender((r) => (r.phase === 'rendering' ? { ...r, pct, phaseLabel } : r)),
       isCancelled: () => cancelRef.current,
@@ -549,6 +688,14 @@ export default function Editor() {
       onLayoutPatch={(p) => setLayout((l) => ({ ...l, ...p }))}
       exportSettings={exportSettings}
       onExportPatch={(p) => setExportSettings((s) => ({ ...s, ...p }))}
+      audio={audio}
+      onAudioPatch={onAudioPatch}
+      onAudioFile={onAudioFile}
+      onAudioRemove={onAudioRemove}
+      before={before}
+      after={after}
+      onCropMode={onCropMode}
+      onCrop={onCrop}
       timelineDur={timelineDur}
       speed={transport.speed}
       canRender={canExport}
@@ -570,8 +717,14 @@ export default function Editor() {
       footer={footer}
       transport={transport}
       timelineDur={timelineDur}
+      cropMode={cropMode}
+      onCropMode={onCropMode}
+      onCrop={onCrop}
       onDivider={(pct) => setLayout((l) => ({ ...l, divider: pct }))}
       onLogoPatch={(p) => setLogo((l) => ({ ...l, ...p }))}
+      onHeaderPatch={(p) => setHeader((h) => ({ ...h, ...p }))}
+      onFooterPatch={(p) => setFooter((f) => ({ ...f, ...p }))}
+      onLayoutPatch={(p) => setLayout((l) => ({ ...l, ...p }))}
       onCaptionClick={onCaptionClick}
       onTogglePlay={togglePlay}
       onScrub={scrub}
@@ -621,6 +774,7 @@ export default function Editor() {
             onRemove={removeSlot}
             onSwap={swapSides}
             onImageDuration={onImageDuration}
+            onCrop={onCropMode}
             registerBrowse={registerBrowse}
           />
         </aside>
@@ -651,6 +805,7 @@ export default function Editor() {
                 onRemove={removeSlot}
                 onSwap={swapSides}
                 onImageDuration={onImageDuration}
+                onCrop={onCropMode}
                 registerBrowse={registerBrowse}
               />
             </AccordionContent>
@@ -678,6 +833,8 @@ export default function Editor() {
 
       {/* hidden video pool (keeps video elements in-DOM for reliable decoding) */}
       <div ref={videoPoolRef} className="hidden" aria-hidden="true" />
+      {/* hidden music preview element (synced to the transport) */}
+      <audio ref={musicPreviewRef} className="hidden" aria-hidden="true" />
 
       <RenderModal
         open={render.open}

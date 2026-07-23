@@ -22,6 +22,16 @@ export class ExportCancelled extends Error {
   }
 }
 
+export interface ExportMusic {
+  file: File
+  /** 0..1 */
+  volume: number
+  /** loop the track when shorter than the export duration */
+  loop: boolean
+  /** keep the original video audio (L/R pan mix) alongside the music */
+  keepOriginal: boolean
+}
+
 export interface ExportJob {
   source: FrameSource
   settings: ExportSettings
@@ -29,6 +39,8 @@ export interface ExportJob {
   timelineDur: number
   speed: number
   loop: boolean
+  /** optional background music track mixed into the export */
+  music?: ExportMusic | null
   onProgress: (pct: number, phase: string) => void
   isCancelled: () => boolean
   /** called after each composited frame — used for the modal's live mini preview */
@@ -144,21 +156,40 @@ export async function exportWebM(job: ExportJob): Promise<ExportOutput> {
   const vids = [videoOf(source.before), videoOf(source.after)].filter(
     (v): v is HTMLVideoElement => !!v,
   )
-  const wantAudio = settings.includeAudio && vids.length > 0
+  const music = job.music ?? null
+  const videoAudio = settings.includeAudio && vids.length > 0 && (!music || music.keepOriginal)
+  const wantAudio = videoAudio || !!music
 
-  // --- audio mix graph (before L / after R) ---
+  // --- audio mix graph (before L / after R, + music bus) ---
   let audioCtx: AudioContext | null = null
   let audioDest: MediaStreamAudioDestinationNode | null = null
+  let musicNode: AudioBufferSourceNode | null = null
   if (wantAudio) {
     audioCtx = new AudioContext()
     audioDest = audioCtx.createMediaStreamDestination()
-    vids.forEach((v, i) => {
-      const srcNode = audioCtx!.createMediaElementSource(v)
-      const pan = audioCtx!.createStereoPanner()
-      pan.pan.value = vids.length === 1 ? 0 : i === 0 ? -1 : 1
-      srcNode.connect(pan)
-      pan.connect(audioDest!)
-    })
+    if (videoAudio) {
+      vids.forEach((v, i) => {
+        const srcNode = audioCtx!.createMediaElementSource(v)
+        const pan = audioCtx!.createStereoPanner()
+        pan.pan.value = vids.length === 1 ? 0 : i === 0 ? -1 : 1
+        srcNode.connect(pan)
+        pan.connect(audioDest!)
+      })
+    }
+    if (music) {
+      try {
+        const buf = await audioCtx.decodeAudioData(await music.file.arrayBuffer())
+        musicNode = audioCtx.createBufferSource()
+        musicNode.buffer = buf
+        musicNode.loop = music.loop
+        const gain = audioCtx.createGain()
+        gain.gain.value = Math.min(1, Math.max(0, music.volume))
+        musicNode.connect(gain)
+        gain.connect(audioDest)
+      } catch {
+        musicNode = null // undecodable track — continue with video audio only
+      }
+    }
   }
 
   const stream = canvas.captureStream(settings.fps)
@@ -177,6 +208,14 @@ export async function exportWebM(job: ExportJob): Promise<ExportOutput> {
   }
 
   const cleanup = () => {
+    if (musicNode) {
+      try {
+        musicNode.stop()
+      } catch {
+        /* noop */
+      }
+      musicNode.disconnect()
+    }
     vids.forEach((v) => {
       try {
         v.pause()
@@ -206,8 +245,16 @@ export async function exportWebM(job: ExportJob): Promise<ExportOutput> {
   recorder.start(250)
 
   try {
+    if (musicNode) {
+      try {
+        musicNode.start()
+      } catch {
+        /* noop */
+      }
+    }
     vids.forEach((v) => {
-      v.muted = false
+      // when music replaces the original audio, keep the videos silent
+      v.muted = music ? !videoAudio : false
       v.playbackRate = speed
       void v.play().catch(() => undefined)
     })
@@ -298,7 +345,9 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
   const vidMedia = [source.before.media, source.after.media].filter(
     (m): m is SlotMedia => !!m && m.kind === 'video',
   )
-  const wantAudio = settings.includeAudio && vidMedia.length > 0
+  const music = job.music ?? null
+  const videoAudio = settings.includeAudio && vidMedia.length > 0 && (!music || music.keepOriginal)
+  const wantAudio = videoAudio || !!music
 
   // --- frame stepping ---
   for (let i = 0; i < totalFrames; i++) {
@@ -322,33 +371,75 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
 
   // --- audio inputs ---
   const audioNames: string[] = []
-  if (wantAudio) {
+  if (videoAudio) {
     for (let i = 0; i < vidMedia.length; i++) {
       const name = `src${i}.${extOf(vidMedia[i].fileName)}`
       await ff.writeFile(name, new Uint8Array(await vidMedia[i].file.arrayBuffer()))
       audioNames.push(name)
     }
   }
+  let musicName: string | null = null
+  if (music) {
+    musicName = `music.${extOf(music.file.name)}`
+    await ff.writeFile(musicName, new Uint8Array(await music.file.arrayBuffer()))
+  }
 
-  const buildArgs = (withAudio: boolean): string[] => {
+  type AudioMode = 'full' | 'music' | 'none'
+  const buildArgs = (mode: AudioMode): string[] => {
+    const useVideo = mode === 'full' && videoAudio && audioNames.length > 0
+    const useMusic = (mode === 'full' || mode === 'music') && !!musicName
     const args = ['-framerate', String(settings.fps), '-i', 'f_%05d.jpg']
-    if (withAudio) for (const n of audioNames) args.push('-i', n)
+    if (useVideo) for (const n of audioNames) args.push('-i', n)
+    if (useMusic) args.push('-i', musicName!)
+    const musicIdx = (useVideo ? audioNames.length : 0) + 1
+
     const maps: string[] = []
-    if (withAudio && audioNames.length === 1) {
-      if (Math.abs(speed - 1) > 0.001) {
-        args.push('-filter_complex', `[1:a]${atempoChain(speed).join(',')}[a]`)
-        maps.push('-map', '0:v', '-map', '[a]')
+    const parts: string[] = []
+    const tempo = Math.abs(speed - 1) > 0.001 ? atempoChain(speed) : null
+    let videoLabel: string | null = null
+    if (useVideo) {
+      if (audioNames.length === 1) {
+        if (tempo) {
+          parts.push(`[1:a]${tempo.join(',')}[av]`)
+          videoLabel = 'av'
+        } else if (useMusic) {
+          parts.push('[1:a]anull[av]')
+          videoLabel = 'av'
+        }
       } else {
-        maps.push('-map', '0:v', '-map', '1:a?')
+        const t = tempo ? `,${tempo.join(',')}` : ''
+        parts.push(`[1:a]pan=stereo|c0=c0|c1=0${t}[a1]`)
+        parts.push(`[2:a]pan=stereo|c0=0|c1=c0${t}[a2]`)
+        parts.push('[a1][a2]amix=inputs=2:duration=first[av]')
+        videoLabel = 'av'
       }
-    } else if (withAudio && audioNames.length >= 2) {
-      const tempo = Math.abs(speed - 1) > 0.001 ? `,${atempoChain(speed).join(',')}` : ''
-      const fc =
-        `[1:a]pan=stereo|c0=c0|c1=0${tempo}[a1];` +
-        `[2:a]pan=stereo|c0=0|c1=c0${tempo}[a2];` +
-        `[a1][a2]amix=inputs=2:duration=first[a]`
-      args.push('-filter_complex', fc)
-      maps.push('-map', '0:v', '-map', '[a]')
+    }
+    let musicLabel: string | null = null
+    if (useMusic && music) {
+      const vol = Math.min(1, Math.max(0, music.volume)).toFixed(3)
+      const loopF = music.loop ? ',aloop=loop=-1:size=2e9' : ''
+      parts.push(
+        `[${musicIdx}:a]volume=${vol}${loopF},apad,atrim=0:${outDur.toFixed(3)},asetpts=PTS-STARTPTS[mu]`,
+      )
+      musicLabel = 'mu'
+    }
+    let outLabel: string | null = null
+    if (videoLabel && musicLabel) {
+      // music is padded/trimmed to the output duration, so it anchors the mix
+      parts.push(`[${musicLabel}][${videoLabel}]amix=inputs=2:duration=first:normalize=0[aout]`)
+      outLabel = 'aout'
+    } else if (videoLabel) {
+      outLabel = videoLabel
+    } else if (musicLabel) {
+      outLabel = musicLabel
+    }
+
+    if (parts.length) args.push('-filter_complex', parts.join(';'))
+    if (outLabel) {
+      maps.push('-map', '0:v', '-map', `[${outLabel}]`)
+    } else if (useVideo) {
+      // single video source, no tempo/music processing needed
+      maps.push('-map', '0:v', '-map', '1:a?')
     } else {
       args.push('-an')
     }
@@ -382,9 +473,13 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
 
   let ok = false
   let lastErr: unknown = null
-  for (const withAudio of wantAudio ? [true, false] : [false]) {
+  const attempts: AudioMode[] = []
+  if (wantAudio) attempts.push('full')
+  if (wantAudio && videoAudio && musicName) attempts.push('music') // sources may lack audio streams
+  attempts.push('none')
+  for (const mode of attempts) {
     try {
-      const code = await ff.exec(buildArgs(withAudio))
+      const code = await ff.exec(buildArgs(mode))
       if (code === 0) {
         ok = true
         break
@@ -392,7 +487,7 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
     } catch (e) {
       lastErr = e
     }
-    // retry without audio (e.g. sources had no audio streams)
+    // retry with a degraded audio graph (e.g. sources had no audio streams)
     try {
       await ff.deleteFile('out.mp4')
     } catch {
@@ -417,6 +512,7 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
   try {
     await ff.deleteFile('out.mp4')
     for (const n of audioNames) await ff.deleteFile(n)
+    if (musicName) await ff.deleteFile(musicName)
     for (let i = 0; i < totalFrames; i++) await ff.deleteFile(`f_${String(i).padStart(5, '0')}.jpg`)
   } catch {
     /* noop */

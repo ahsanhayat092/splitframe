@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   AlertTriangle,
   ArrowLeftRight,
+  Crop as CropIcon,
   FolderOpen,
   Minus,
   Plus,
@@ -16,7 +17,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { Side, SlotState } from '@/lib/editor/types'
-import { fmtTimecode } from '@/lib/editor/types'
+import { fmtTimecode, isFullCrop } from '@/lib/editor/types'
 import { truncateMiddle } from '@/lib/editor/media'
 import { cn } from '@/lib/utils'
 
@@ -86,6 +87,7 @@ function SlotCard({
   onFile,
   onRemove,
   onImageDuration,
+  onCrop,
   registerBrowse,
   flipping,
 }: {
@@ -94,6 +96,7 @@ function SlotCard({
   onFile: (side: Side, file: File) => void
   onRemove: (side: Side) => void
   onImageDuration: (side: Side, sec: number) => void
+  onCrop: (side: Side | null) => void
   registerBrowse: (side: Side, fn: () => void) => void
   flipping: boolean
 }) {
@@ -224,6 +227,30 @@ function SlotCard({
                 />
               )}
             </div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              {!isFullCrop(slot.crop) ? (
+                <span
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                    accent
+                      ? 'border-before/60 bg-before-dim text-before'
+                      : 'border-after/60 bg-after-dim text-after',
+                  )}
+                >
+                  Cropped
+                </span>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => onCrop(side)}
+                className="flex items-center gap-1.5 rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <CropIcon className="h-3 w-3" />
+                {!isFullCrop(slot.crop) ? 'Re-crop' : 'Crop'}
+              </button>
+            </div>
           </motion.div>
         ) : (
           <motion.div
@@ -289,6 +316,7 @@ export default function MediaPanel({
   onRemove,
   onSwap,
   onImageDuration,
+  onCrop,
   registerBrowse,
 }: {
   before: SlotState
@@ -297,6 +325,7 @@ export default function MediaPanel({
   onRemove: (side: Side) => void
   onSwap: () => void
   onImageDuration: (side: Side, sec: number) => void
+  onCrop: (side: Side | null) => void
   registerBrowse: (side: Side, fn: () => void) => void
 }) {
   const [flipping, setFlipping] = useState(false)
@@ -329,6 +358,7 @@ export default function MediaPanel({
         onFile={onFile}
         onRemove={onRemove}
         onImageDuration={onImageDuration}
+        onCrop={onCrop}
         registerBrowse={registerBrowse}
         flipping={flipping}
       />
@@ -338,6 +368,7 @@ export default function MediaPanel({
         onFile={onFile}
         onRemove={onRemove}
         onImageDuration={onImageDuration}
+        onCrop={onCrop}
         registerBrowse={registerBrowse}
         flipping={flipping}
       />
