@@ -8,7 +8,7 @@
  */
 import { useRef } from 'react'
 import { ImageIcon, Trash2, UploadCloud } from 'lucide-react'
-import type { BannerImageSlot, BannerState } from '@/lib/editor/types'
+import type { BannerImageFit, BannerImageSlot, BannerState } from '@/lib/editor/types'
 import { BANNER_FONT_FAMILY } from '@/lib/editor/banner'
 import { truncateMiddle } from '@/lib/editor/media'
 import { Switch } from '@/components/ui/switch'
@@ -23,6 +23,8 @@ function ImageSlotRow({
   hint,
   slot,
   circle,
+  fit,
+  onFitChange,
   onFile,
   onRemove,
 }: {
@@ -31,6 +33,9 @@ function ImageSlotRow({
   slot: BannerImageSlot
   /** circular thumbnail (emblem) */
   circle?: boolean
+  /** per-image fit mode; when set (and an image is loaded) a Fit/Fill toggle shows */
+  fit?: BannerImageFit
+  onFitChange?: (v: BannerImageFit) => void
   onFile: (f: File) => void
   onRemove: () => void
 }) {
@@ -94,6 +99,21 @@ function ImageSlotRow({
           <UploadCloud className="h-4 w-4 text-ink-3" />
           <span className="font-mono text-[11px] text-ink-2">Upload {title.toLowerCase()}</span>
           <span className="font-mono text-[10px] text-ink-3">{hint}</span>
+        </div>
+      )}
+      {fit !== undefined && onFitChange && slot.url && (
+        <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
+          <Label>Image fit</Label>
+          <Segmented
+            size="sm"
+            options={[
+              { value: 'contain' as const, label: 'Fit', title: 'Whole image visible, letterboxed' },
+              { value: 'cover' as const, label: 'Fill', title: 'Fill the slot, cropping overflow' },
+            ]}
+            value={fit}
+            onChange={onFitChange}
+            className="w-36"
+          />
         </div>
       )}
     </PanelCard>
@@ -252,9 +272,11 @@ export default function BannerTab({
 
               <ImageSlotRow
                 title="Emblem"
-                hint="square PNG looks best"
+                hint="any aspect — the whole logo stays visible"
                 slot={t.emblem}
                 circle
+                fit={banner.emblemFit}
+                onFitChange={(v) => onPatch({ emblemFit: v })}
                 onFile={(f) => onImage('emblem', f)}
                 onRemove={() => onImageRemove('emblem')}
               />
@@ -262,6 +284,8 @@ export default function BannerTab({
                 title="Photo"
                 hint="optional — dashed box when empty"
                 slot={t.photo}
+                fit={banner.photoFit}
+                onFitChange={(v) => onPatch({ photoFit: v })}
                 onFile={(f) => onImage('photo', f)}
                 onRemove={() => onImageRemove('photo')}
               />

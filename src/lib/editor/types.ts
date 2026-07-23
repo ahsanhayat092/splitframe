@@ -121,6 +121,8 @@ export interface LogoState {
 
 export type BannerMode = 'template' | 'upload'
 export type BannerPlacement = 'top' | 'bottom'
+/** How a template banner image (emblem/photo) fits its slot. */
+export type BannerImageFit = 'contain' | 'cover'
 
 /** A user-uploadable image slot inside the template banner. */
 export interface BannerImageSlot {
@@ -164,6 +166,10 @@ export interface BannerState {
    * from `placement`. Set by dragging on the Stage.
    */
   pos: PointPct | null
+  /** template mode: emblem fit — 'contain' shows the whole image, 'cover' fills + crops */
+  emblemFit: BannerImageFit
+  /** template mode: photo fit — 'contain' letterboxes, 'cover' fills + crops */
+  photoFit: BannerImageFit
   template: BannerTemplateState
   upload: BannerUploadState
 }
@@ -272,6 +278,8 @@ export const DEFAULT_BANNER: BannerState = {
   placement: 'bottom',
   heightPct: 16,
   pos: null,
+  emblemFit: 'contain',
+  photoFit: 'contain',
   template: {
     headline: 'وزیراعلیٰ پنجاب [نام] کی ہدایت پر',
     tagTitle: 'CM PUNJAB',

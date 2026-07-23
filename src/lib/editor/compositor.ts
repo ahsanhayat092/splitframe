@@ -604,6 +604,27 @@ function drawCoverFit(
   ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
 }
 
+/**
+ * Contain-fit draw of an image into a rect — the whole image stays visible,
+ * aspect preserved, centered (caller provides/letterboxes the backdrop).
+ */
+function drawContainFit(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+) {
+  const sw = img.naturalWidth || 0
+  const sh = img.naturalHeight || 0
+  if (!sw || !sh || w <= 0 || h <= 0) return
+  const scale = Math.min(w / sw, h / sh)
+  const dw = sw * scale
+  const dh = sh * scale
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
+}
+
 /** Neutral shield glyph for the empty emblem slot. */
 function drawShieldGlyph(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   ctx.beginPath()
@@ -697,7 +718,14 @@ function drawTemplateBanner(
     ctx.arc(emblemCx, emblemCy, emblemR * 0.94, 0, Math.PI * 2)
     ctx.clip()
     try {
-      drawCoverFit(ctx, emblem, emblemCx - emblemR, emblemCy - emblemR, emblemD, emblemD)
+      if (banner.emblemFit === 'cover') {
+        drawCoverFit(ctx, emblem, emblemCx - emblemR, emblemCy - emblemR, emblemD, emblemD)
+      } else {
+        // contain: fit inside the inscribed square of the circular clip so the
+        // whole image stays visible; the white circle fill letterboxes it.
+        const inner = emblemR * 0.94 * Math.SQRT2
+        drawContainFit(ctx, emblem, emblemCx - inner / 2, emblemCy - inner / 2, inner, inner)
+      }
     } catch {
       /* not decoded yet */
     }
@@ -733,7 +761,14 @@ function drawTemplateBanner(
     roundRectPath(ctx, photoX, photoY, photoW, photoH, photoH * 0.08)
     ctx.clip()
     try {
-      drawCoverFit(ctx, photo, photoX, photoY, photoW, photoH)
+      if (banner.photoFit === 'cover') {
+        drawCoverFit(ctx, photo, photoX, photoY, photoW, photoH)
+      } else {
+        // contain: letterbox on a cream backdrop, whole image visible.
+        ctx.fillStyle = '#f0ede4'
+        ctx.fillRect(photoX, photoY, photoW, photoH)
+        drawContainFit(ctx, photo, photoX, photoY, photoW, photoH)
+      }
     } catch {
       /* not decoded yet */
     }
