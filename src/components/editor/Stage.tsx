@@ -3,7 +3,7 @@
  * draggable/resizable logo overlay, draggable caption & badge overlays,
  * per-slot crop mode, click-to-edit captions, transport bar.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -23,6 +23,7 @@ import type {
   BannerState,
   CropRect,
   FooterCaptionState,
+  FrameAdjust,
   HeaderCaptionState,
   LayoutState,
   LogoState,
@@ -30,7 +31,17 @@ import type {
   SlotState,
   TransportState,
 } from '@/lib/editor/types'
-import { clampCrop, fmtTime, isFullCrop, SPEEDS } from '@/lib/editor/types'
+import {
+  clampAdjust,
+  clampCrop,
+  DEFAULT_ADJUST,
+  fmtTime,
+  isDefaultAdjust,
+  isFullCrop,
+  SPEEDS,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '@/lib/editor/types'
 import {
   badgeRects,
   bannerRect,
@@ -38,6 +49,7 @@ import {
   captionHitRects,
   logoRect,
   mediaDrawRect,
+  mediaWindowRect,
   paneRects,
 } from '@/lib/editor/compositor'
 import { Slider } from '@/components/ui/slider'
@@ -197,6 +209,21 @@ interface CropDrag {
   startCrop: CropRect
 }
 
+/** Geometry snapshot for an adjust-frame pan drag (all in canvas px). */
+interface PanDrag {
+  pointerId: number
+  startClientX: number
+  startClientY: number
+  startPanX: number
+  startPanY: number
+  /** dest px per source px (window → pane transform) */
+  kx: number
+  ky: number
+  /** half the window overflow in source px (0 at zoom 1, < 0 zoomed out) */
+  overX: number
+  overY: number
+}
+
 const clampNum = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
 /** Snap a value to nearby targets (canvas px). */
@@ -224,6 +251,9 @@ export default function Stage({
   cropMode,
   onCropMode,
   onCrop,
+  adjustMode,
+  onAdjustMode,
+  onAdjust,
   onDivider,
   onLogoPatch,
   onBannerPatch,
@@ -252,6 +282,9 @@ export default function Stage({
   cropMode: Side | null
   onCropMode: (side: Side | null) => void
   onCrop: (side: Side, crop: CropRect | null) => void
+  adjustMode: Side | null
+  onAdjustMode: (side: Side | null) => void
+  onAdjust: (side: Side, adjust: FrameAdjust) => void
   onDivider: (pct: number) => void
   onLogoPatch: (patch: Partial<LogoState>) => void
   onBannerPatch: (patch: Partial<BannerState>) => void
@@ -613,6 +646,143 @@ export default function Stage({
     onCropMode(null)
   }
 
+  // ---- adjust-frame mode (zoom & pan per slot) ----
+  const panDragState = useRef<PanDrag | null>(null)
+  const adjustPaneRef = useRef<HTMLDivElement | null>(null)
+  const [panDrag, setPanDrag] = useState(false)
+  const adjustSlot = adjustMode === 'before' ? before : adjustMode === 'after' ? after : null
+  const adjustMedia = adjustSlot?.media ?? null
+  const adjustPane = adjustMode && adjustMedia ? paneRects(layout, dims.w, dims.h)[adjustMode] : null
+  // latest-adjust mirror so rapid wheel events accumulate within one frame
+  const adjustLiveRef = useRef<FrameAdjust | null>(null)
+  useEffect(() => {
+    adjustLiveRef.current = adjustSlot?.adjust ?? null
+  })
+
+  // Escape exits adjust-frame mode (edits are live, like caption drags)
+  useEffect(() => {
+    if (!adjustMode) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onAdjustMode(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [adjustMode, onAdjustMode])
+
+  /**
+   * Current window geometry for the slot being adjusted:
+   *  - cropPx: crop rect in source px (the pan domain)
+   *  - win:    effective source window (crop + zoom/pan), source px
+   *  - dest:   where the window lands in the pane, canvas px
+   */
+  const adjustGeom = useMemo(
+    () =>
+      adjustMode && adjustSlot && adjustMedia && adjustPane
+        ? {
+            cropPx: mediaWindowRect(adjustMedia, adjustSlot.crop, null),
+            win: mediaWindowRect(adjustMedia, adjustSlot.crop, adjustSlot.adjust),
+            dest: mediaDrawRect(
+              adjustMedia,
+              adjustPane,
+              adjustMode === 'before' ? layout.fitBefore : layout.fitAfter,
+              1,
+              adjustSlot.crop,
+              adjustSlot.adjust,
+            ),
+          }
+        : null,
+    [adjustMode, adjustSlot, adjustMedia, adjustPane, layout.fitBefore, layout.fitAfter],
+  )
+
+  const patchAdjust = (patch: Partial<FrameAdjust>) => {
+    if (!adjustMode || !adjustSlot) return
+    onAdjust(adjustMode, clampAdjust({ ...adjustSlot.adjust, ...patch }))
+  }
+
+  /** Re-derive pan so that source point (spx, spy) sits at dest fraction (fx, fy) at zoom z. */
+  const panForAnchor = (
+    z: number,
+    spx: number,
+    spy: number,
+    fx: number,
+    fy: number,
+    cropPx: { x: number; y: number; w: number; h: number },
+  ): FrameAdjust => {
+    const nw = cropPx.w / z
+    const nh = cropPx.h / z
+    const baseX = cropPx.x + cropPx.w / 2 - nw / 2
+    const baseY = cropPx.y + cropPx.h / 2 - nh / 2
+    const overX = (cropPx.w - nw) / 2
+    const overY = (cropPx.h - nh) / 2
+    const nx0 = clampNum(spx - fx * nw, baseX - Math.abs(overX), baseX + Math.abs(overX))
+    const ny0 = clampNum(spy - fy * nh, baseY - Math.abs(overY), baseY + Math.abs(overY))
+    return clampAdjust({
+      zoom: z,
+      panX: Math.abs(overX) > 1e-6 ? (nx0 - baseX) / overX : 0,
+      panY: Math.abs(overY) > 1e-6 ? (ny0 - baseY) / overY : 0,
+    })
+  }
+
+  /** Wheel / pinch zoom centered on the pointer (native, non-passive). */
+  useEffect(() => {
+    const el = adjustPaneRef.current
+    if (!el || !adjustMode) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const s = adjustSlot
+      const g = adjustGeom
+      const frame = frameRef.current
+      if (!s || !g || !frame || g.dest.w <= 0 || g.dest.h <= 0) return
+      const cur = adjustLiveRef.current ?? s.adjust
+      const rect = frame.getBoundingClientRect()
+      const canvasX = ((e.clientX - rect.left) / rect.width) * dims.w
+      const canvasY = ((e.clientY - rect.top) / rect.height) * dims.h
+      const z = clampNum(cur.zoom * Math.exp(-e.deltaY * 0.0016), ZOOM_MIN, ZOOM_MAX)
+      const fx = clampNum((canvasX - g.dest.x) / g.dest.w, 0, 1)
+      const fy = clampNum((canvasY - g.dest.y) / g.dest.h, 0, 1)
+      const next = panForAnchor(z, g.win.x + fx * g.win.w, g.win.y + fy * g.win.h, fx, fy, g.cropPx)
+      adjustLiveRef.current = next
+      onAdjust(adjustMode, next)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [adjustMode, adjustSlot, adjustGeom, dims.w, dims.h, onAdjust])
+
+  const onAdjustPaneDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!adjustMode || !adjustSlot || !adjustGeom || adjustGeom.dest.w <= 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    const { win, dest, cropPx } = adjustGeom
+    panDragState.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startPanX: adjustSlot.adjust.panX,
+      startPanY: adjustSlot.adjust.panY,
+      kx: dest.w / win.w,
+      ky: dest.h / win.h,
+      overX: (cropPx.w - win.w) / 2,
+      overY: (cropPx.h - win.h) / 2,
+    }
+    setPanDrag(true)
+  }
+  const onAdjustPaneMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const st = panDragState.current
+    if (!st || st.pointerId !== e.pointerId || !adjustMode) return
+    // grab-the-image: dragging right pulls the window left, and vice versa
+    const dWinX = -((e.clientX - st.startClientX) / sx) / st.kx
+    const dWinY = -((e.clientY - st.startClientY) / sx) / st.ky
+    patchAdjust({
+      panX: Math.abs(st.overX) > 1e-6 ? st.startPanX + dWinX / st.overX : 0,
+      panY: Math.abs(st.overY) > 1e-6 ? st.startPanY + dWinY / st.overY : 0,
+    })
+  }
+  const onAdjustPaneUp = () => {
+    panDragState.current = null
+    setPanDrag(false)
+  }
+
   const onFullscreen = () => {
     const el = frameRef.current
     if (!el) return
@@ -625,7 +795,7 @@ export default function Stage({
   const bRect = banner.enabled ? bannerRect(banner, dims.w, dims.h) : null
   const capRects = captionHitRects(header, footer, dims.w, dims.h)
   const badges = badgeRects(layout, dims.w, dims.h)
-  const overlaysEnabled = !bothEmpty && !cropMode
+  const overlaysEnabled = !bothEmpty && !cropMode && !adjustMode
 
   // crop overlay geometry (screen px)
   const cropScreen =
@@ -650,6 +820,7 @@ export default function Stage({
           'relative select-none overflow-hidden rounded-xl border border-line bg-surface-0 transition-shadow duration-300',
           transport.playing && 'shadow-[0_0_24px_rgba(184,240,74,0.22)]',
           cropMode && (cropMode === 'before' ? 'border-before/60' : 'border-after/60'),
+          adjustMode && (adjustMode === 'before' ? 'border-before/60' : 'border-after/60'),
         )}
         style={{
           width: display.w || undefined,
@@ -1025,6 +1196,89 @@ export default function Stage({
                 >
                   <Check className="h-3.5 w-3.5" />
                   Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --------------------- adjust-frame mode --------------------- */}
+        {adjustMode && adjustSlot && adjustMedia && adjustPane && adjustGeom && adjustPane.w > 0 && adjustPane.h > 0 && (
+          <div className="pointer-events-none absolute inset-0 z-40">
+            {/* pane hit area — drag to pan, wheel/pinch to zoom */}
+            <div
+              ref={adjustPaneRef}
+              role="presentation"
+              aria-label="Adjust frame — drag to pan, scroll to zoom"
+              onPointerDown={onAdjustPaneDown}
+              onPointerMove={onAdjustPaneMove}
+              onPointerUp={onAdjustPaneUp}
+              onPointerCancel={onAdjustPaneUp}
+              className={cn(
+                'pointer-events-auto absolute touch-none border-2',
+                panDrag ? 'cursor-grabbing' : 'cursor-grab',
+                adjustMode === 'before' ? 'border-before' : 'border-after',
+              )}
+              style={{
+                left: adjustPane.x * sx,
+                top: adjustPane.y * sx,
+                width: adjustPane.w * sx,
+                height: adjustPane.h * sx,
+                boxShadow: '0 0 0 9999px rgba(10,11,14,0.55)',
+              }}
+            >
+              {/* pan hint */}
+              <span className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap rounded-full border border-line bg-surface-1/90 px-2 py-0.5 font-mono text-[10px] text-ink-2">
+                drag to pan · scroll to zoom
+              </span>
+            </div>
+
+            {/* adjust-frame action bar */}
+            <div className="pointer-events-auto absolute inset-x-0 bottom-3 z-50 flex items-center justify-center gap-2 px-4">
+              <div className="flex items-center gap-2 rounded-full border border-line bg-surface-1/95 px-3 py-2 shadow-lg backdrop-blur">
+                <span
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                    adjustMode === 'before'
+                      ? 'border-before/60 bg-before-dim text-before'
+                      : 'border-after/60 bg-after-dim text-after',
+                  )}
+                >
+                  FRAME {adjustMode === 'before' ? 'BEFORE' : 'AFTER'}
+                </span>
+                <Slider
+                  min={ZOOM_MIN}
+                  max={ZOOM_MAX}
+                  step={0.05}
+                  value={[adjustSlot.adjust.zoom]}
+                  onValueChange={([v]) => patchAdjust({ zoom: v })}
+                  aria-label="Frame zoom"
+                  className="w-28 sm:w-36 [&_[data-slot=slider-range]]:bg-after [&_[data-slot=slider-thumb]]:border-after"
+                />
+                <span className="w-10 shrink-0 text-center font-mono text-[11px] text-ink-2 tabular-nums">
+                  {adjustSlot.adjust.zoom.toFixed(1)}×
+                </span>
+                {!isDefaultAdjust(adjustSlot.adjust) && (
+                  <button
+                    type="button"
+                    onClick={() => onAdjust(adjustMode, { ...DEFAULT_ADJUST })}
+                    className="rounded-full border border-line-strong px-3 py-1.5 text-xs font-semibold text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                  >
+                    Reset
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onAdjustMode(null)}
+                  className={cn(
+                    'flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-[0.97]',
+                    adjustMode === 'before'
+                      ? 'bg-before text-surface-0 hover:shadow-[0_0_12px_rgba(76,201,240,0.4)]'
+                      : 'bg-after text-after-ink hover:shadow-[0_0_12px_rgba(184,240,74,0.4)]',
+                  )}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Done
                 </button>
               </div>
             </div>

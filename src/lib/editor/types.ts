@@ -43,6 +43,19 @@ export interface CropRect {
   h: number
 }
 
+/**
+ * Per-slot "Adjust frame" — zoom & pan window into the (cropped) source.
+ * zoom 1 + pan 0/0 = unchanged behavior. zoom > 1 zooms in (window shrinks
+ * inside the crop rect); zoom < 1 zooms out (window grows beyond the crop
+ * rect, letterboxed per the slot's fit rules). panX/panY are -1..1 fractions
+ * of the available window overflow.
+ */
+export interface FrameAdjust {
+  zoom: number
+  panX: number
+  panY: number
+}
+
 export interface SlotState {
   media: SlotMedia | null
   /** Decode / read error message, if any. */
@@ -51,6 +64,8 @@ export interface SlotState {
   imageDuration: number
   /** Source crop (fractions of source media); null = full frame. */
   crop: CropRect | null
+  /** Zoom & pan window, applied AFTER the crop. */
+  adjust: FrameAdjust
   loading: boolean
 }
 
@@ -321,11 +336,17 @@ export const DEFAULT_AUDIO: AudioTrackState = {
   keepOriginal: true,
 }
 
+export const ZOOM_MIN = 0.5
+export const ZOOM_MAX = 5
+
+export const DEFAULT_ADJUST: FrameAdjust = { zoom: 1, panX: 0, panY: 0 }
+
 export const EMPTY_SLOT: SlotState = {
   media: null,
   error: null,
   imageDuration: 3,
   crop: null,
+  adjust: DEFAULT_ADJUST,
   loading: false,
 }
 
@@ -354,6 +375,44 @@ export function badgeFontPct(layout: LayoutState, side: Side): number {
 export function isFullCrop(c: CropRect | null | undefined): boolean {
   if (!c) return true
   return c.x <= 0.001 && c.y <= 0.001 && c.w >= 0.999 && c.h >= 0.999
+}
+
+/** True when the frame adjustment is the identity (zoom 1, no pan). */
+export function isDefaultAdjust(a: FrameAdjust | null | undefined): boolean {
+  if (!a) return true
+  return Math.abs(a.zoom - 1) < 0.001 && Math.abs(a.panX) < 0.001 && Math.abs(a.panY) < 0.001
+}
+
+/** Clamp a frame adjustment to its valid ranges. */
+export function clampAdjust(a: FrameAdjust): FrameAdjust {
+  return {
+    zoom: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, a.zoom)),
+    panX: Math.min(1, Math.max(-1, a.panX)),
+    panY: Math.min(1, Math.max(-1, a.panY)),
+  }
+}
+
+/**
+ * Effective source window (fractions of the source media) after composing
+ * crop + zoom/pan. The window may extend beyond the crop rect (zoom < 1) and
+ * even beyond the source bounds — callers clip when drawing. Invariants:
+ * zoom ≥ 1 → window stays inside the crop rect (source always covers the
+ * frame); zoom < 1 → window always contains the crop rect.
+ */
+export function adjustSourceRect(crop: CropRect | null, adjust: FrameAdjust | null | undefined): CropRect {
+  const c = crop ?? { x: 0, y: 0, w: 1, h: 1 }
+  const a = clampAdjust(adjust ?? DEFAULT_ADJUST)
+  const w = c.w / a.zoom
+  const h = c.h / a.zoom
+  // half the overflow: > 0 when zoomed in, < 0 when zoomed out
+  const overX = (c.w - w) / 2
+  const overY = (c.h - h) / 2
+  return {
+    x: c.x + c.w / 2 - w / 2 + a.panX * overX,
+    y: c.y + c.h / 2 - h / 2 + a.panY * overY,
+    w,
+    h,
+  }
 }
 
 /** Clamp a crop rect to sane bounds (min 5% of source). */

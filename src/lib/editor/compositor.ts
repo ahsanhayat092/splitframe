@@ -10,6 +10,7 @@ import type {
   CropRect,
   FitMode,
   FooterCaptionState,
+  FrameAdjust,
   HeaderCaptionState,
   LayoutState,
   LogoState,
@@ -17,7 +18,14 @@ import type {
   SlotMedia,
   SlotState,
 } from './types'
-import { badgeFontPct, captionFontPct, detailFontPct, stillProgressAt } from './types'
+import {
+  adjustSourceRect,
+  badgeFontPct,
+  captionFontPct,
+  detailFontPct,
+  isDefaultAdjust,
+  stillProgressAt,
+} from './types'
 import { BANNER_COLORS, BANNER_FONT_FAMILY } from './banner'
 
 export interface Rect {
@@ -37,6 +45,8 @@ export interface FrameSource {
   banner: BannerState
   /** side currently being cropped on the Stage — rendered uncropped (preview only) */
   cropEditing?: Side | null
+  /** side currently in adjust-frame mode — Ken Burns paused for it (preview only) */
+  adjustEditing?: Side | null
 }
 
 export interface DrawOptions {
@@ -224,6 +234,21 @@ function mediaDims(media: SlotMedia): { sw: number; sh: number } {
 }
 
 /**
+ * Effective source window in source px after composing crop + zoom/pan.
+ * May extend beyond the source bounds when zoomed out — clip before drawing.
+ * Shared by the compositor and the Stage adjust-frame overlay.
+ */
+export function mediaWindowRect(
+  media: SlotMedia,
+  crop?: CropRect | null,
+  adjust?: FrameAdjust | null,
+): Rect {
+  const { sw, sh } = mediaDims(media)
+  const adj = adjustSourceRect(crop ?? null, adjust ?? null)
+  return { x: adj.x * sw, y: adj.y * sh, w: adj.w * sw, h: adj.h * sh }
+}
+
+/**
  * Where the media is actually drawn inside `rect` for a given fit/zoom,
  * in canvas px. Shared by the compositor and the Stage crop overlay.
  */
@@ -233,11 +258,18 @@ export function mediaDrawRect(
   fit: FitMode,
   zoom: number,
   crop?: CropRect | null,
+  adjust?: FrameAdjust | null,
 ): Rect {
   let { sw, sh } = mediaDims(media)
   if (crop) {
     sw *= crop.w
     sh *= crop.h
+  }
+  if (adjust && !isDefaultAdjust(adjust)) {
+    // fit against the zoom window's virtual dims (window = crop / zoom)
+    const z = Math.min(5, Math.max(0.5, adjust.zoom))
+    sw /= z
+    sh /= z
   }
   if (!sw || !sh || rect.w <= 0 || rect.h <= 0) return { x: rect.x, y: rect.y, w: 0, h: 0 }
   if (fit === 'cover' || fit === 'contain') {
@@ -262,22 +294,40 @@ function drawMediaInto(
   fit: FitMode,
   zoom: number,
   crop?: CropRect | null,
+  adjust?: FrameAdjust | null,
 ) {
   const { sw, sh } = mediaDims(media)
   if (!sw || !sh || rect.w <= 0 || rect.h <= 0) return
-  const d = mediaDrawRect(media, rect, fit, zoom, crop)
-  // source rect (crop fractions of the source media)
-  const sx0 = crop ? crop.x * sw : 0
-  const sy0 = crop ? crop.y * sh : 0
-  const sw0 = crop ? crop.w * sw : sw
-  const sh0 = crop ? crop.h * sh : sh
-  if (sw0 <= 0 || sh0 <= 0 || d.w <= 0 || d.h <= 0) return
+  const d = mediaDrawRect(media, rect, fit, zoom, crop, adjust)
+  if (d.w <= 0 || d.h <= 0) return
+  // effective source window (crop + zoom/pan composed), source px
+  const win = mediaWindowRect(media, crop, adjust)
+  if (win.w <= 0 || win.h <= 0) return
+  // clip the window to the source bounds (zoom < 1 may overshoot) and map
+  // the surviving sub-rect through the window → destination transform
+  const ix0 = Math.min(sw, Math.max(0, win.x))
+  const iy0 = Math.min(sh, Math.max(0, win.y))
+  const ix1 = Math.min(sw, Math.max(0, win.x + win.w))
+  const iy1 = Math.min(sh, Math.max(0, win.y + win.h))
+  if (ix1 <= ix0 || iy1 <= iy0) return
+  const kx = d.w / win.w
+  const ky = d.h / win.h
   ctx.save()
   ctx.beginPath()
   ctx.rect(rect.x, rect.y, rect.w, rect.h)
   ctx.clip()
   try {
-    ctx.drawImage(media.el, sx0, sy0, sw0, sh0, d.x, d.y, d.w, d.h)
+    ctx.drawImage(
+      media.el,
+      ix0,
+      iy0,
+      ix1 - ix0,
+      iy1 - iy0,
+      d.x + (ix0 - win.x) * kx,
+      d.y + (iy0 - win.y) * ky,
+      (ix1 - ix0) * kx,
+      (iy1 - iy0) * ky,
+    )
   } catch {
     /* element not ready yet */
   }
@@ -837,13 +887,19 @@ export function drawFrame(
   const afterMedia = src.after.media
 
   const zoomFor = (media: SlotMedia | null, holdDur: number, side: Side) => {
-    if (src.cropEditing === side) return 1
+    if (src.cropEditing === side || src.adjustEditing === side) return 1
     if (!media || media.kind !== 'image' || !layout.kenBurns) return 1
+    // a manual zoom/pan frame takes precedence over Ken Burns for that slot
+    const slot = side === 'before' ? src.before : src.after
+    if (!isDefaultAdjust(slot.adjust)) return 1
     return 1 + 0.08 * layout.kenBurnsIntensity * stillProgressAt(t, holdDur)
   }
 
   const cropFor = (side: Side, slot: SlotState): CropRect | null =>
     src.cropEditing === side ? null : slot.crop
+  // crop mode previews the FULL source — the frame window is suspended too
+  const adjustFor = (side: Side, slot: SlotState): FrameAdjust | null =>
+    src.cropEditing === side ? null : slot.adjust
   // crop mode shows the FULL source fitted inside the pane (contain)
   const fitFor = (side: Side): FitMode =>
     src.cropEditing === side
@@ -860,7 +916,7 @@ export function drawFrame(
       ctx.beginPath()
       ctx.rect(0, 0, splitX, H)
       ctx.clip()
-      drawMediaInto(ctx, beforeMedia, panes.before, fitFor('before'), zoomFor(beforeMedia, src.before.imageDuration, 'before'), cropFor('before', src.before))
+      drawMediaInto(ctx, beforeMedia, panes.before, fitFor('before'), zoomFor(beforeMedia, src.before.imageDuration, 'before'), cropFor('before', src.before), adjustFor('before', src.before))
       ctx.restore()
     } else {
       drawEmptyPane(ctx, { x: 0, y: 0, w: splitX, h: H }, src.layout.beforeLabel, BEFORE, H)
@@ -870,19 +926,19 @@ export function drawFrame(
       ctx.beginPath()
       ctx.rect(splitX, 0, W - splitX, H)
       ctx.clip()
-      drawMediaInto(ctx, afterMedia, panes.after, fitFor('after'), zoomFor(afterMedia, src.after.imageDuration, 'after'), cropFor('after', src.after))
+      drawMediaInto(ctx, afterMedia, panes.after, fitFor('after'), zoomFor(afterMedia, src.after.imageDuration, 'after'), cropFor('after', src.after), adjustFor('after', src.after))
       ctx.restore()
     } else {
       drawEmptyPane(ctx, { x: splitX, y: 0, w: W - splitX, h: H }, src.layout.afterLabel, AFTER, H)
     }
   } else {
     if (beforeMedia) {
-      drawMediaInto(ctx, beforeMedia, panes.before, fitFor('before'), zoomFor(beforeMedia, src.before.imageDuration, 'before'), cropFor('before', src.before))
+      drawMediaInto(ctx, beforeMedia, panes.before, fitFor('before'), zoomFor(beforeMedia, src.before.imageDuration, 'before'), cropFor('before', src.before), adjustFor('before', src.before))
     } else {
       drawEmptyPane(ctx, panes.before, src.layout.beforeLabel, BEFORE, H)
     }
     if (afterMedia) {
-      drawMediaInto(ctx, afterMedia, panes.after, fitFor('after'), zoomFor(afterMedia, src.after.imageDuration, 'after'), cropFor('after', src.after))
+      drawMediaInto(ctx, afterMedia, panes.after, fitFor('after'), zoomFor(afterMedia, src.after.imageDuration, 'after'), cropFor('after', src.after), adjustFor('after', src.after))
     } else {
       drawEmptyPane(ctx, panes.after, src.layout.afterLabel, AFTER, H)
     }

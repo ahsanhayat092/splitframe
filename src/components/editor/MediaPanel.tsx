@@ -10,6 +10,7 @@ import {
   ArrowLeftRight,
   Crop as CropIcon,
   FolderOpen,
+  Frame as FrameIcon,
   Minus,
   Plus,
   RefreshCw,
@@ -17,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { Side, SlotState } from '@/lib/editor/types'
-import { fmtTimecode, isFullCrop } from '@/lib/editor/types'
+import { fmtTimecode, isDefaultAdjust, isFullCrop } from '@/lib/editor/types'
 import { truncateMiddle } from '@/lib/editor/media'
 import { cn } from '@/lib/utils'
 
@@ -88,6 +89,7 @@ function SlotCard({
   onRemove,
   onImageDuration,
   onCrop,
+  onAdjustMode,
   registerBrowse,
   flipping,
 }: {
@@ -97,6 +99,7 @@ function SlotCard({
   onRemove: (side: Side) => void
   onImageDuration: (side: Side, sec: number) => void
   onCrop: (side: Side | null) => void
+  onAdjustMode: (side: Side | null) => void
   registerBrowse: (side: Side, fn: () => void) => void
   flipping: boolean
 }) {
@@ -228,28 +231,50 @@ function SlotCard({
               )}
             </div>
             <div className="mt-2 flex items-center justify-between gap-2">
-              {!isFullCrop(slot.crop) ? (
-                <span
-                  className={cn(
-                    'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-                    accent
-                      ? 'border-before/60 bg-before-dim text-before'
-                      : 'border-after/60 bg-after-dim text-after',
-                  )}
+              <span className="flex min-w-0 items-center gap-1">
+                {!isFullCrop(slot.crop) && (
+                  <span
+                    className={cn(
+                      'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                      accent
+                        ? 'border-before/60 bg-before-dim text-before'
+                        : 'border-after/60 bg-after-dim text-after',
+                    )}
+                  >
+                    Cropped
+                  </span>
+                )}
+                {!isDefaultAdjust(slot.adjust) && (
+                  <span
+                    className={cn(
+                      'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                      accent
+                        ? 'border-before/60 bg-before-dim text-before'
+                        : 'border-after/60 bg-after-dim text-after',
+                    )}
+                  >
+                    Zoomed {slot.adjust.zoom.toFixed(1)}×
+                  </span>
+                )}
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onCrop(side)}
+                  className="flex items-center gap-1.5 rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
                 >
-                  Cropped
-                </span>
-              ) : (
-                <span />
-              )}
-              <button
-                type="button"
-                onClick={() => onCrop(side)}
-                className="flex items-center gap-1.5 rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-              >
-                <CropIcon className="h-3 w-3" />
-                {!isFullCrop(slot.crop) ? 'Re-crop' : 'Crop'}
-              </button>
+                  <CropIcon className="h-3 w-3" />
+                  {!isFullCrop(slot.crop) ? 'Re-crop' : 'Crop'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAdjustMode(side)}
+                  className="flex items-center gap-1.5 rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <FrameIcon className="h-3 w-3" />
+                  {!isDefaultAdjust(slot.adjust) ? 'Re-frame' : 'Adjust frame'}
+                </button>
+              </span>
             </div>
           </motion.div>
         ) : (
@@ -317,6 +342,7 @@ export default function MediaPanel({
   onSwap,
   onImageDuration,
   onCrop,
+  onAdjustMode,
   registerBrowse,
 }: {
   before: SlotState
@@ -326,6 +352,7 @@ export default function MediaPanel({
   onSwap: () => void
   onImageDuration: (side: Side, sec: number) => void
   onCrop: (side: Side | null) => void
+  onAdjustMode: (side: Side | null) => void
   registerBrowse: (side: Side, fn: () => void) => void
 }) {
   const [flipping, setFlipping] = useState(false)
@@ -359,6 +386,7 @@ export default function MediaPanel({
         onRemove={onRemove}
         onImageDuration={onImageDuration}
         onCrop={onCrop}
+        onAdjustMode={onAdjustMode}
         registerBrowse={registerBrowse}
         flipping={flipping}
       />
@@ -369,6 +397,7 @@ export default function MediaPanel({
         onRemove={onRemove}
         onImageDuration={onImageDuration}
         onCrop={onCrop}
+        onAdjustMode={onAdjustMode}
         registerBrowse={registerBrowse}
         flipping={flipping}
       />

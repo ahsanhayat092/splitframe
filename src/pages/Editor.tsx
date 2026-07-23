@@ -12,6 +12,7 @@ import type {
   EditorStatus,
   ExportSettings,
   FooterCaptionState,
+  FrameAdjust,
   HeaderCaptionState,
   LayoutState,
   LogoState,
@@ -20,6 +21,7 @@ import type {
   TransportState,
 } from '@/lib/editor/types'
 import {
+  DEFAULT_ADJUST,
   DEFAULT_AUDIO,
   DEFAULT_BANNER,
   DEFAULT_EXPORT,
@@ -99,6 +101,7 @@ export default function Editor() {
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT)
   const [audio, setAudio] = useState<AudioTrackState>(DEFAULT_AUDIO)
   const [cropMode, setCropMode] = useState<Side | null>(null)
+  const [adjustMode, setAdjustMode] = useState<Side | null>(null)
   const [transport, setTransport] = useState<TransportState>(DEFAULT_TRANSPORT)
   const [projectName, setProjectName] = useState('untitled-comparison')
   const [status, setStatus] = useState<EditorStatus>('ready')
@@ -125,9 +128,9 @@ export default function Editor() {
   const dims = previewDims(layout.aspect)
 
   // latest-state mirror for the rAF loop & imperative handlers
-  const stateRef = useRef({ before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, transport })
+  const stateRef = useRef({ before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, adjustMode, transport })
   useEffect(() => {
-    stateRef.current = { before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, transport }
+    stateRef.current = { before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, adjustMode, transport }
   })
   const timelineDurRef = useRef(timelineDur)
   useEffect(() => {
@@ -143,6 +146,7 @@ export default function Editor() {
     logo: s.logo,
     banner: s.banner,
     cropEditing: s.cropMode,
+    adjustEditing: s.adjustMode,
   })
 
   /* ------------------------------- toasts ------------------------------- */
@@ -171,8 +175,9 @@ export default function Editor() {
         const media = await loadSlotMedia(file, kind)
         const prev = stateRef.current[side]
         disposeSlotMedia(prev.media)
-        setSlot(side, { media, loading: false, error: null, crop: null })
+        setSlot(side, { media, loading: false, error: null, crop: null, adjust: DEFAULT_ADJUST })
         setCropMode((m) => (m === side ? null : m))
+        setAdjustMode((m) => (m === side ? null : m))
         timeRef.current = 0
         setTransport((t) => ({ ...t, time: 0, playing: false }))
       } catch (e) {
@@ -190,6 +195,7 @@ export default function Editor() {
     disposeSlotMedia(prev.media)
     setSlot(side, { ...EMPTY_SLOT, imageDuration: prev.imageDuration })
     setCropMode((m) => (m === side ? null : m))
+    setAdjustMode((m) => (m === side ? null : m))
     timeRef.current = 0
     setTransport((t) => ({ ...t, time: 0, playing: false }))
   }, [])
@@ -199,16 +205,33 @@ export default function Editor() {
     setBefore(a)
     setAfter(b)
     setCropMode(null)
+    setAdjustMode(null)
   }, [])
 
   /* ---------------------------- crop actions ---------------------------- */
   const onCropMode = useCallback((side: Side | null) => {
-    if (side) setTransport((t) => ({ ...t, playing: false }))
+    if (side) {
+      setTransport((t) => ({ ...t, playing: false }))
+      setAdjustMode(null)
+    }
     setCropMode(side)
   }, [])
 
   const onCrop = useCallback((side: Side, crop: CropRect | null) => {
     setSlot(side, { crop })
+  }, [])
+
+  /* ------------------------ adjust-frame actions ------------------------ */
+  const onAdjustMode = useCallback((side: Side | null) => {
+    if (side) {
+      setTransport((t) => ({ ...t, playing: false }))
+      setCropMode(null)
+    }
+    setAdjustMode(side)
+  }, [])
+
+  const onAdjust = useCallback((side: Side, adjust: FrameAdjust) => {
+    setSlot(side, { adjust })
   }, [])
 
   /* ---------------------------- audio actions --------------------------- */
@@ -626,6 +649,7 @@ export default function Editor() {
     if (!s.before.media || !s.after.media) return
     cancelRef.current = false
     setCropMode(null)
+    setAdjustMode(null)
     setTransport((t) => ({ ...t, playing: false }))
     setStatus('rendering')
     setRender({ ...IDLE_RENDER, open: true, phase: 'rendering', phaseLabel: 'Preparing…' })
@@ -635,7 +659,7 @@ export default function Editor() {
     const filename = `splitframe-${slugify(projectName)}.${settings.format}`
 
     exportVideo({
-      source: { ...frameSource(s), cropEditing: null },
+      source: { ...frameSource(s), cropEditing: null, adjustEditing: null },
       settings,
       timelineDur: dur,
       speed: s.transport.speed,
@@ -762,6 +786,8 @@ export default function Editor() {
       after={after}
       onCropMode={onCropMode}
       onCrop={onCrop}
+      onAdjustMode={onAdjustMode}
+      onAdjust={onAdjust}
       timelineDur={timelineDur}
       speed={transport.speed}
       canRender={canExport}
@@ -787,6 +813,9 @@ export default function Editor() {
       cropMode={cropMode}
       onCropMode={onCropMode}
       onCrop={onCrop}
+      adjustMode={adjustMode}
+      onAdjustMode={onAdjustMode}
+      onAdjust={onAdjust}
       onDivider={(pct) => setLayout((l) => ({ ...l, divider: pct }))}
       onLogoPatch={(p) => setLogo((l) => ({ ...l, ...p }))}
       onBannerPatch={onBannerPatch}
@@ -843,6 +872,7 @@ export default function Editor() {
             onSwap={swapSides}
             onImageDuration={onImageDuration}
             onCrop={onCropMode}
+            onAdjustMode={onAdjustMode}
             registerBrowse={registerBrowse}
           />
         </aside>
@@ -874,6 +904,7 @@ export default function Editor() {
                 onSwap={swapSides}
                 onImageDuration={onImageDuration}
                 onCrop={onCropMode}
+                onAdjustMode={onAdjustMode}
                 registerBrowse={registerBrowse}
               />
             </AccordionContent>

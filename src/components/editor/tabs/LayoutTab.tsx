@@ -3,9 +3,26 @@
  * per-side fit, Ken Burns for stills.
  */
 import { motion } from 'framer-motion'
-import { Crop as CropIcon } from 'lucide-react'
-import type { AspectId, CropRect, FitMode, LayoutState, Side, SlotState, SplitMode } from '@/lib/editor/types'
-import { ASPECTS, badgeFontPct, isFullCrop } from '@/lib/editor/types'
+import { Crop as CropIcon, Frame as FrameIcon } from 'lucide-react'
+import type {
+  AspectId,
+  CropRect,
+  FitMode,
+  FrameAdjust,
+  LayoutState,
+  Side,
+  SlotState,
+  SplitMode,
+} from '@/lib/editor/types'
+import {
+  ASPECTS,
+  badgeFontPct,
+  DEFAULT_ADJUST,
+  isDefaultAdjust,
+  isFullCrop,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '@/lib/editor/types'
 import { Switch } from '@/components/ui/switch'
 import {
   Select,
@@ -89,6 +106,8 @@ export default function LayoutTab({
   after,
   onCropMode,
   onCrop,
+  onAdjustMode,
+  onAdjust,
 }: {
   layout: LayoutState
   onPatch: (patch: Partial<LayoutState>) => void
@@ -96,6 +115,8 @@ export default function LayoutTab({
   after?: SlotState
   onCropMode?: (side: Side | null) => void
   onCrop?: (side: Side, crop: CropRect | null) => void
+  onAdjustMode?: (side: Side | null) => void
+  onAdjust?: (side: Side, adjust: FrameAdjust) => void
 }) {
   const gapless = layout.mode === 'slider'
   return (
@@ -293,6 +314,76 @@ export default function LayoutTab({
           </div>
           <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
             Crop is per side and carries into the export.
+          </p>
+        </PanelCard>
+      )}
+
+      {before && after && onAdjustMode && (
+        <PanelCard>
+          <Label className="mb-2">Frame · zoom &amp; pan</Label>
+          <div className="space-y-4">
+            {(
+              [
+                ['before', before, 'Before'] as const,
+                ['after', after, 'After'] as const,
+              ]
+            ).map(([side, slot, label]) => {
+              const zoomed = !isDefaultAdjust(slot.adjust)
+              return (
+                <div key={side} className={cn('space-y-2', !slot.media && 'pointer-events-none opacity-40')}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 text-sm text-ink-2">
+                      {label}
+                      {zoomed && (
+                        <span
+                          className={cn(
+                            'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+                            side === 'before'
+                              ? 'border-before/60 bg-before-dim text-before'
+                              : 'border-after/60 bg-after-dim text-after',
+                          )}
+                        >
+                          Zoomed
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      {zoomed && onAdjust && (
+                        <button
+                          type="button"
+                          onClick={() => onAdjust(side, { ...DEFAULT_ADJUST })}
+                          className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 transition-colors hover:bg-surface-3 hover:text-ink"
+                        >
+                          Reset
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={!slot.media}
+                        onClick={() => onAdjustMode(side)}
+                        className="flex items-center gap-1.5 rounded-full border border-line-strong px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3"
+                      >
+                        <FrameIcon className="h-3.5 w-3.5" />
+                        {zoomed ? 'Re-frame' : 'Adjust frame'}
+                      </button>
+                    </span>
+                  </div>
+                  <SliderRow
+                    label={`Zoom · ${label.toLowerCase()}`}
+                    value={Math.round(slot.adjust.zoom * 100) / 100}
+                    min={ZOOM_MIN}
+                    max={ZOOM_MAX}
+                    step={0.1}
+                    onChange={(v) => onAdjust?.(side, { ...slot.adjust, zoom: v })}
+                    format={(v) => `${v.toFixed(1)}×`}
+                  />
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
+            Only what falls inside the frame is compared and exported. Zoom applies after crop; a
+            manual frame pauses Ken Burns for that side.
           </p>
         </PanelCard>
       )}

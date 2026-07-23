@@ -16,6 +16,7 @@ import type {
   CropRect,
   ExportSettings,
   FooterCaptionState,
+  FrameAdjust,
   HeaderCaptionState,
   LayoutState,
   LogoState,
@@ -62,6 +63,8 @@ export interface InspectorProps {
   after: SlotState
   onCropMode: (side: Side | null) => void
   onCrop: (side: Side, crop: CropRect | null) => void
+  onAdjustMode: (side: Side | null) => void
+  onAdjust: (side: Side, adjust: FrameAdjust) => void
   timelineDur: number
   speed: number
   canRender: boolean
@@ -114,6 +117,8 @@ export default function Inspector(props: InspectorProps) {
       after={props.after}
       onCropMode={props.onCropMode}
       onCrop={props.onCrop}
+      onAdjustMode={props.onAdjustMode}
+      onAdjust={props.onAdjust}
     />
   )
   const audioPanel = (
