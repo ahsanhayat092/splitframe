@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/accordion'
 import type {
   AudioTrackState,
+  BannerState,
   CropRect,
   ExportSettings,
   FooterCaptionState,
@@ -25,10 +26,12 @@ import CaptionsTab from './tabs/CaptionsTab'
 import LogoTab from './tabs/LogoTab'
 import LayoutTab from './tabs/LayoutTab'
 import AudioTab from './tabs/AudioTab'
+import BannerTab from './tabs/BannerTab'
+import type { BannerImageSlotId } from './tabs/BannerTab'
 import ExportTab from './tabs/ExportTab'
 import { cn } from '@/lib/utils'
 
-export type InspectorTabId = 'captions' | 'logo' | 'layout' | 'audio' | 'export'
+export type InspectorTabId = 'captions' | 'logo' | 'layout' | 'audio' | 'banner' | 'export'
 
 export interface InspectorProps {
   tab: InspectorTabId
@@ -51,6 +54,10 @@ export interface InspectorProps {
   onAudioPatch: (p: Partial<AudioTrackState>) => void
   onAudioFile: (f: File) => void
   onAudioRemove: () => void
+  banner: BannerState
+  onBannerPatch: (p: Partial<BannerState>) => void
+  onBannerImage: (slot: BannerImageSlotId, f: File) => void
+  onBannerImageRemove: (slot: BannerImageSlotId) => void
   before: SlotState
   after: SlotState
   onCropMode: (side: Side | null) => void
@@ -68,6 +75,7 @@ const TABS: { id: InspectorTabId; label: string }[] = [
   { id: 'logo', label: 'Logo' },
   { id: 'layout', label: 'Layout' },
   { id: 'audio', label: 'Audio' },
+  { id: 'banner', label: 'Banner' },
   { id: 'export', label: 'Export' },
 ]
 
@@ -117,6 +125,14 @@ export default function Inspector(props: InspectorProps) {
       onRemove={props.onAudioRemove}
     />
   )
+  const bannerPanel = (
+    <BannerTab
+      banner={props.banner}
+      onPatch={props.onBannerPatch}
+      onImage={props.onBannerImage}
+      onImageRemove={props.onBannerImageRemove}
+    />
+  )
   const exportPanel = (
     <ExportTab
       settings={props.exportSettings}
@@ -139,7 +155,7 @@ export default function Inspector(props: InspectorProps) {
           onValueChange={(v) => onTab(v as InspectorTabId)}
           className="flex h-full min-h-0 flex-col"
         >
-          <TabsList className="grid h-11 w-full shrink-0 grid-cols-5 rounded-none border-b border-line bg-surface-1 p-1">
+          <TabsList className="grid h-11 w-full shrink-0 grid-cols-6 rounded-none border-b border-line bg-surface-1 p-1">
             {TABS.map((t) => (
               <TabsTrigger
                 key={t.id}
@@ -158,6 +174,7 @@ export default function Inspector(props: InspectorProps) {
             <TabsContent value="logo" className="m-0">{logoPanel}</TabsContent>
             <TabsContent value="layout" className="m-0">{layoutPanel}</TabsContent>
             <TabsContent value="audio" className="m-0">{audioPanel}</TabsContent>
+            <TabsContent value="banner" className="m-0">{bannerPanel}</TabsContent>
             <TabsContent value="export" className="m-0">{exportPanel}</TabsContent>
           </div>
         </Tabs>
@@ -194,6 +211,12 @@ export default function Inspector(props: InspectorProps) {
               Audio
             </AccordionTrigger>
             <AccordionContent className="p-0">{audioPanel}</AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="banner" className="border-line">
+            <AccordionTrigger className="px-4 text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">
+              Banner
+            </AccordionTrigger>
+            <AccordionContent className="p-0">{bannerPanel}</AccordionContent>
           </AccordionItem>
           <AccordionItem value="export" className="border-line">
             <AccordionTrigger className="px-4 text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">

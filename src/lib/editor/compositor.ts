@@ -6,6 +6,7 @@
  * against a 1080px-tall baseline and scaled by H/1080 here.
  */
 import type {
+  BannerState,
   CropRect,
   FitMode,
   FooterCaptionState,
@@ -17,6 +18,7 @@ import type {
   SlotState,
 } from './types'
 import { badgeFontPct, captionFontPct, detailFontPct, stillProgressAt } from './types'
+import { BANNER_COLORS, BANNER_FONT_FAMILY } from './banner'
 
 export interface Rect {
   x: number
@@ -32,6 +34,7 @@ export interface FrameSource {
   header: HeaderCaptionState
   footer: FooterCaptionState
   logo: LogoState
+  banner: BannerState
   /** side currently being cropped on the Stage — rendered uncropped (preview only) */
   cropEditing?: Side | null
 }
@@ -500,6 +503,318 @@ function drawCaptionBar(
   ctx.restore()
 }
 
+/* ------------------------------ banner ---------------------------------- */
+
+/**
+ * On-canvas rect of the emblem banner. Template mode: full-width strip of
+ * `heightPct`% height (pos.y overrides the top edge). Upload mode: image at
+ * `widthPct`% of canvas width (pos overrides top-left). Shared by the
+ * compositor and the Stage drag overlay.
+ */
+export function bannerRect(banner: BannerState, W: number, H: number): Rect | null {
+  if (!banner.enabled) return null
+  if (banner.mode === 'upload') {
+    const img = banner.upload.img
+    if (!img || !img.naturalWidth) return null
+    const w = (W * banner.upload.widthPct) / 100
+    const h = (w * img.naturalHeight) / img.naturalWidth
+    const pad = H * 0.02
+    let x = (W - w) / 2
+    let y = banner.placement === 'top' ? pad : H - h - pad
+    if (banner.pos) {
+      x = (banner.pos.x / 100) * W
+      y = (banner.pos.y / 100) * H
+    }
+    x = Math.min(Math.max(x, 0), Math.max(0, W - w))
+    y = Math.min(Math.max(y, 0), Math.max(0, H - h))
+    return { x, y, w, h }
+  }
+  const h = (H * banner.heightPct) / 100
+  let y = banner.placement === 'top' ? 0 : H - h
+  if (banner.pos) y = (banner.pos.y / 100) * H
+  y = Math.min(Math.max(y, 0), Math.max(0, H - h))
+  return { x: 0, y, w: W, h }
+}
+
+/** Cover-fit draw of an image into a rect (caller clips first). */
+function drawCoverFit(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+) {
+  const sw = img.naturalWidth || 0
+  const sh = img.naturalHeight || 0
+  if (!sw || !sh || w <= 0 || h <= 0) return
+  const scale = Math.max(w / sw, h / sh)
+  const dw = sw * scale
+  const dh = sh * scale
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
+}
+
+/** Neutral shield glyph for the empty emblem slot. */
+function drawShieldGlyph(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - r * 0.5)
+  ctx.quadraticCurveTo(cx + r * 0.42, cy - r * 0.42, cx + r * 0.42, cy - r * 0.05)
+  ctx.quadraticCurveTo(cx + r * 0.42, cy + r * 0.3, cx, cy + r * 0.52)
+  ctx.quadraticCurveTo(cx - r * 0.42, cy + r * 0.3, cx - r * 0.42, cy - r * 0.05)
+  ctx.quadraticCurveTo(cx - r * 0.42, cy - r * 0.42, cx, cy - r * 0.5)
+  ctx.closePath()
+}
+
+/** Wrap text to at most maxLines, ellipsizing leftovers (per current font). */
+function wrapTextLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+  maxLines: number,
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let line = ''
+  let truncated = false
+  for (const w of words) {
+    const t = line ? `${line} ${w}` : w
+    if (!line || ctx.measureText(t).width <= maxW) {
+      line = t
+      continue
+    }
+    lines.push(line)
+    line = w
+    if (lines.length === maxLines) {
+      truncated = true
+      break
+    }
+  }
+  if (!truncated && line) lines.push(line)
+  if (truncated && lines.length) {
+    let last = lines[lines.length - 1]
+    while (last.length > 1 && ctx.measureText(`${last}…`).width > maxW) {
+      last = last.slice(0, -1)
+    }
+    lines[lines.length - 1] = `${last}…`
+  }
+  return lines
+}
+
+function drawTemplateBanner(
+  ctx: CanvasRenderingContext2D,
+  banner: BannerState,
+  r: Rect,
+  W: number,
+) {
+  const t = banner.template
+  const headerH = r.h * 0.62
+  const stripH = r.h - headerH
+  const hy = r.y
+  const sy = r.y + headerH
+  const padX = Math.max(8, W * 0.022)
+
+  ctx.save()
+
+  // green header bar (dark → mid, top → bottom)
+  const g = ctx.createLinearGradient(0, hy, 0, hy + headerH)
+  g.addColorStop(0, BANNER_COLORS.greenDark)
+  g.addColorStop(1, BANNER_COLORS.greenMid)
+  ctx.fillStyle = g
+  ctx.fillRect(r.x, hy, r.w, headerH)
+
+  // cream caption strip
+  ctx.fillStyle = BANNER_COLORS.cream
+  ctx.fillRect(r.x, sy, r.w, stripH)
+  // gold hairline separating the two bands
+  ctx.fillStyle = BANNER_COLORS.gold
+  ctx.globalAlpha = 0.85
+  ctx.fillRect(r.x, sy - Math.max(1, r.h * 0.008), r.w, Math.max(1, r.h * 0.008))
+  ctx.globalAlpha = 1
+
+  /* ---- emblem (right side — first in RTL reading order) ---- */
+  const emblemD = headerH * 0.74
+  const emblemR = emblemD / 2
+  const emblemCx = r.x + r.w - padX - emblemR
+  const emblemCy = hy + headerH / 2
+  ctx.beginPath()
+  ctx.arc(emblemCx, emblemCy, emblemR, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  const emblem = t.emblem.img
+  if (emblem && emblem.naturalWidth) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(emblemCx, emblemCy, emblemR * 0.94, 0, Math.PI * 2)
+    ctx.clip()
+    try {
+      drawCoverFit(ctx, emblem, emblemCx - emblemR, emblemCy - emblemR, emblemD, emblemD)
+    } catch {
+      /* not decoded yet */
+    }
+    ctx.restore()
+  } else {
+    ctx.save()
+    ctx.strokeStyle = BANNER_COLORS.greenMid
+    ctx.fillStyle = 'rgba(20,90,50,0.08)'
+    ctx.lineWidth = Math.max(1, emblemD * 0.03)
+    drawShieldGlyph(ctx, emblemCx, emblemCy, emblemR * 0.62)
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+  }
+  // gold ring (dashed when it's still a placeholder, like the template)
+  ctx.beginPath()
+  ctx.arc(emblemCx, emblemCy, emblemR, 0, Math.PI * 2)
+  ctx.strokeStyle = BANNER_COLORS.gold
+  ctx.lineWidth = Math.max(1, emblemD * 0.035)
+  if (!emblem || !emblem.naturalWidth) ctx.setLineDash([emblemD * 0.09, emblemD * 0.06])
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  /* ---- photo box (left side) ---- */
+  const photoW = headerH * 1.4
+  const photoH = headerH * 0.8
+  const photoX = r.x + padX
+  const photoY = hy + (headerH - photoH) / 2
+  const photo = t.photo.img
+  const photoReady = photo && photo.naturalWidth
+  if (photoReady) {
+    ctx.save()
+    roundRectPath(ctx, photoX, photoY, photoW, photoH, photoH * 0.08)
+    ctx.clip()
+    try {
+      drawCoverFit(ctx, photo, photoX, photoY, photoW, photoH)
+    } catch {
+      /* not decoded yet */
+    }
+    ctx.restore()
+  } else {
+    ctx.save()
+    ctx.fillStyle = 'rgba(247,243,232,0.10)'
+    roundRectPath(ctx, photoX, photoY, photoW, photoH, photoH * 0.08)
+    ctx.fill()
+    ctx.restore()
+  }
+  ctx.save()
+  roundRectPath(ctx, photoX, photoY, photoW, photoH, photoH * 0.08)
+  ctx.strokeStyle = BANNER_COLORS.gold
+  ctx.lineWidth = Math.max(1, photoH * 0.03)
+  if (!photoReady) ctx.setLineDash([photoH * 0.1, photoH * 0.07])
+  ctx.stroke()
+  ctx.restore()
+  if (!photoReady) {
+    ctx.save()
+    ctx.fillStyle = 'rgba(212,175,55,0.85)'
+    ctx.font = `500 ${Math.max(7, photoH * 0.16)}px "JetBrains Mono", monospace`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('PHOTO', photoX + photoW / 2, photoY + photoH / 2)
+    ctx.restore()
+  }
+
+  /* ---- headline (gold, RTL, centered between emblem and photo) ---- */
+  const headline = t.headline.trim()
+  if (headline) {
+    const textL = photoX + photoW + padX * 0.7
+    const textR = emblemCx - emblemR - padX * 0.7
+    const avail = Math.max(0, textR - textL)
+    let fs = headerH * 0.34
+    ctx.font = `400 ${fs}px ${BANNER_FONT_FAMILY}`
+    const tw = ctx.measureText(headline).width
+    if (tw > avail && tw > 0) fs = Math.max(headerH * 0.16, fs * (avail / tw))
+    ctx.font = `400 ${fs}px ${BANNER_FONT_FAMILY}`
+    ctx.direction = 'rtl'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = BANNER_COLORS.gold
+    ctx.fillText(headline, (textL + textR) / 2, emblemCy)
+  }
+
+  /* ---- tag box on the cream strip (right side) ---- */
+  const tagTitle = t.tagTitle.trim()
+  const tagName = t.tagName.trim()
+  const chipFs = Math.max(7, stripH * 0.17)
+  const nameFs = Math.max(8, stripH * 0.22)
+  let chipW = 0
+  let nameW = 0
+  if (tagTitle) {
+    ctx.font = `700 ${chipFs}px "Space Grotesk", sans-serif`
+    chipW = ctx.measureText(tagTitle).width + chipFs * 1.6
+  }
+  if (tagName) {
+    ctx.font = `700 ${nameFs}px "Space Grotesk", sans-serif`
+    nameW = ctx.measureText(tagName).width + nameFs * 0.6
+  }
+  const tagW = Math.max(chipW, nameW, stripH * 0.5)
+  const chipH = tagTitle ? chipFs * 1.8 : 0
+  const nameH = tagName ? nameFs * 1.3 : 0
+  const tagGapY = tagTitle && tagName ? stripH * 0.06 : 0
+  const tagTotal = chipH + tagGapY + nameH
+  const tagCx = r.x + r.w - padX - tagW / 2
+  let ty = sy + (stripH - tagTotal) / 2
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.direction = 'ltr'
+  if (tagTitle) {
+    roundRectPath(ctx, tagCx - chipW / 2, ty, chipW, chipH, chipH * 0.22)
+    ctx.fillStyle = BANNER_COLORS.greenDark
+    ctx.fill()
+    ctx.fillStyle = BANNER_COLORS.gold
+    ctx.font = `700 ${chipFs}px "Space Grotesk", sans-serif`
+    ctx.fillText(tagTitle, tagCx, ty + chipH / 2 + chipFs * 0.04)
+    ty += chipH + tagGapY
+  }
+  if (tagName) {
+    ctx.fillStyle = BANNER_COLORS.greenDark
+    ctx.font = `800 ${nameFs}px "Space Grotesk", sans-serif`
+    ctx.fillText(tagName, tagCx, ty + nameH / 2)
+  }
+
+  /* ---- Urdu caption (RTL, right-aligned beside the tag, wraps to 2 lines) ---- */
+  const caption = t.caption.trim()
+  if (caption) {
+    const capFs = Math.max(9, stripH * 0.3)
+    ctx.font = `400 ${capFs}px ${BANNER_FONT_FAMILY}`
+    const capR = tagCx - tagW / 2 - padX * 0.9
+    const capL = r.x + padX
+    const capW = Math.max(0, capR - capL)
+    if (capW > capFs) {
+      const lines = wrapTextLines(ctx, caption, capW, 2)
+      const lh = capFs * 1.9
+      ctx.direction = 'rtl'
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = '#111111'
+      let ly = sy + stripH / 2 - (lines.length * lh) / 2 + lh / 2
+      for (const line of lines) {
+        ctx.fillText(line, capR, ly)
+        ly += lh
+      }
+    }
+  }
+
+  ctx.restore()
+}
+
+function drawBanner(ctx: CanvasRenderingContext2D, banner: BannerState, W: number, H: number) {
+  const r = bannerRect(banner, W, H)
+  if (!r || r.w <= 0 || r.h <= 0) return
+  if (banner.mode === 'upload') {
+    const img = banner.upload.img
+    if (!img || !img.naturalWidth) return
+    ctx.save()
+    ctx.globalAlpha = Math.min(1, Math.max(0.1, banner.upload.opacity))
+    try {
+      ctx.drawImage(img, r.x, r.y, r.w, r.h)
+    } catch {
+      /* not decoded yet */
+    }
+    ctx.restore()
+    return
+  }
+  drawTemplateBanner(ctx, banner, r, W)
+}
+
 /* ------------------------------ main ----------------------------------- */
 
 export function drawFrame(
@@ -621,6 +936,11 @@ export function drawFrame(
       }
       ctx.restore()
     }
+  }
+
+  // emblem banner overlay (template recreation or uploaded image) — burned in
+  if (src.banner?.enabled) {
+    drawBanner(ctx, src.banner, W, H)
   }
 
   // safe-area guides — preview only

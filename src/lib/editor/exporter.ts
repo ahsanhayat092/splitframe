@@ -11,6 +11,7 @@
  */
 import { drawFrame } from './compositor'
 import type { FrameSource } from './compositor'
+import { ensureBannerFonts } from './banner'
 import { destroyFFmpeg, getFFmpeg } from './ffmpeg'
 import type { ExportSettings, SlotMedia } from './types'
 import { outputDims, videoTimeAt } from './types'
@@ -525,5 +526,10 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
 }
 
 export async function exportVideo(job: ExportJob): Promise<ExportOutput> {
+  // the banner's Nastaliq webfont must be registered before the first frame
+  if (job.source.banner?.enabled && job.source.banner.mode === 'template') {
+    job.onProgress(0, 'Loading Urdu font…')
+    await ensureBannerFonts()
+  }
   return job.settings.format === 'mp4' ? exportMP4(job) : exportWebM(job)
 }

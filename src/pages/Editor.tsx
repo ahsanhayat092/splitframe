@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, TriangleAlert } from 'lucide-react'
 import type {
   AudioTrackState,
+  BannerState,
   CropRect,
   EditorStatus,
   ExportSettings,
@@ -20,6 +21,7 @@ import type {
 } from '@/lib/editor/types'
 import {
   DEFAULT_AUDIO,
+  DEFAULT_BANNER,
   DEFAULT_EXPORT,
   DEFAULT_FOOTER,
   DEFAULT_HEADER,
@@ -34,6 +36,7 @@ import {
   timelineDuration,
   videoTimeAt,
 } from '@/lib/editor/types'
+import { ensureBannerFonts } from '@/lib/editor/banner'
 import { disposeSlotMedia, loadSlotMedia } from '@/lib/editor/media'
 import { drawFrame } from '@/lib/editor/compositor'
 import type { FrameSource } from '@/lib/editor/compositor'
@@ -91,6 +94,7 @@ export default function Editor() {
   const [header, setHeader] = useState<HeaderCaptionState>(DEFAULT_HEADER)
   const [footer, setFooter] = useState<FooterCaptionState>(DEFAULT_FOOTER)
   const [logo, setLogo] = useState<LogoState>(DEFAULT_LOGO)
+  const [banner, setBanner] = useState<BannerState>(DEFAULT_BANNER)
   const [layout, setLayout] = useState<LayoutState>(DEFAULT_LAYOUT)
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT)
   const [audio, setAudio] = useState<AudioTrackState>(DEFAULT_AUDIO)
@@ -121,9 +125,9 @@ export default function Editor() {
   const dims = previewDims(layout.aspect)
 
   // latest-state mirror for the rAF loop & imperative handlers
-  const stateRef = useRef({ before, after, header, footer, logo, layout, exportSettings, audio, cropMode, transport })
+  const stateRef = useRef({ before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, transport })
   useEffect(() => {
-    stateRef.current = { before, after, header, footer, logo, layout, exportSettings, audio, cropMode, transport }
+    stateRef.current = { before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, transport }
   })
   const timelineDurRef = useRef(timelineDur)
   useEffect(() => {
@@ -137,6 +141,7 @@ export default function Editor() {
     header: s.header,
     footer: s.footer,
     logo: s.logo,
+    banner: s.banner,
     cropEditing: s.cropMode,
   })
 
@@ -280,6 +285,60 @@ export default function Editor() {
     if (prev.url) URL.revokeObjectURL(prev.url)
     setLogo((l) => ({ ...DEFAULT_LOGO, burnIn: l.burnIn }))
   }, [])
+
+  /* --------------------------- banner actions --------------------------- */
+  const onBannerPatch = useCallback(
+    (p: Partial<BannerState>) => setBanner((b) => ({ ...b, ...p })),
+    [],
+  )
+
+  const onBannerImage = useCallback(
+    (slot: 'emblem' | 'photo' | 'upload', file: File) => {
+      if (!file.type.startsWith('image/')) {
+        pushToast('Banner images must be PNG, JPG, WebP or SVG.')
+        return
+      }
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.onload = () => {
+        const prev = stateRef.current.banner
+        const prevSlot = slot === 'upload' ? prev.upload : prev.template[slot]
+        if (prevSlot.url) URL.revokeObjectURL(prevSlot.url)
+        setBanner((b) => {
+          if (slot === 'upload') {
+            return { ...b, upload: { ...b.upload, img, url, name: file.name } }
+          }
+          return {
+            ...b,
+            template: { ...b.template, [slot]: { img, url, name: file.name } },
+          }
+        })
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        pushToast("Couldn't decode that image.")
+      }
+      img.src = url
+    },
+    [pushToast],
+  )
+
+  const onBannerImageRemove = useCallback((slot: 'emblem' | 'photo' | 'upload') => {
+    const prev = stateRef.current.banner
+    const prevSlot = slot === 'upload' ? prev.upload : prev.template[slot]
+    if (prevSlot.url) URL.revokeObjectURL(prevSlot.url)
+    setBanner((b) => {
+      const empty = { img: null, url: null, name: null }
+      if (slot === 'upload') return { ...b, upload: { ...b.upload, ...empty } }
+      return { ...b, template: { ...b.template, [slot]: empty } }
+    })
+  }, [])
+
+  // load the Nastaliq webfont as soon as the template banner is enabled, so
+  // the preview swaps to the correct shaping as soon as it arrives
+  useEffect(() => {
+    if (banner.enabled && banner.mode === 'template') void ensureBannerFonts()
+  }, [banner.enabled, banner.mode])
 
   /* --------------------------- video pool (DOM) -------------------------- */
   useEffect(() => {
@@ -445,6 +504,9 @@ export default function Editor() {
       disposeSlotMedia(s.after.media)
       if (s.logo.url) URL.revokeObjectURL(s.logo.url)
       if (s.audio.url) URL.revokeObjectURL(s.audio.url)
+      for (const slot of [s.banner.template.emblem, s.banner.template.photo, s.banner.upload]) {
+        if (slot.url) URL.revokeObjectURL(slot.url)
+      }
     },
     [],
   )
@@ -692,6 +754,10 @@ export default function Editor() {
       onAudioPatch={onAudioPatch}
       onAudioFile={onAudioFile}
       onAudioRemove={onAudioRemove}
+      banner={banner}
+      onBannerPatch={onBannerPatch}
+      onBannerImage={onBannerImage}
+      onBannerImageRemove={onBannerImageRemove}
       before={before}
       after={after}
       onCropMode={onCropMode}
@@ -713,6 +779,7 @@ export default function Editor() {
       after={after}
       layout={layout}
       logo={logo}
+      banner={banner}
       header={header}
       footer={footer}
       transport={transport}
@@ -722,6 +789,7 @@ export default function Editor() {
       onCrop={onCrop}
       onDivider={(pct) => setLayout((l) => ({ ...l, divider: pct }))}
       onLogoPatch={(p) => setLogo((l) => ({ ...l, ...p }))}
+      onBannerPatch={onBannerPatch}
       onHeaderPatch={(p) => setHeader((h) => ({ ...h, ...p }))}
       onFooterPatch={(p) => setFooter((f) => ({ ...f, ...p }))}
       onLayoutPatch={(p) => setLayout((l) => ({ ...l, ...p }))}

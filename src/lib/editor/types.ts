@@ -104,6 +104,55 @@ export interface LogoState {
   burnIn: boolean
 }
 
+export type BannerMode = 'template' | 'upload'
+export type BannerPlacement = 'top' | 'bottom'
+
+/** A user-uploadable image slot inside the template banner. */
+export interface BannerImageSlot {
+  img: HTMLImageElement | null
+  url: string | null
+  name: string | null
+}
+
+export interface BannerTemplateState {
+  /** Urdu headline on the green bar (RTL). */
+  headline: string
+  /** Latin tag chip label, e.g. "CM PUNJAB". */
+  tagTitle: string
+  /** Tag name under the chip, e.g. "[NAME]". */
+  tagName: string
+  /** Urdu caption on the cream strip (RTL). */
+  caption: string
+  emblem: BannerImageSlot
+  photo: BannerImageSlot
+}
+
+export interface BannerUploadState {
+  img: HTMLImageElement | null
+  url: string | null
+  name: string | null
+  /** width as % of canvas width, 20..100 */
+  widthPct: number
+  /** 0.1..1 */
+  opacity: number
+}
+
+export interface BannerState {
+  enabled: boolean
+  mode: BannerMode
+  placement: BannerPlacement
+  /** template mode: banner height as % of canvas height, 10..30 */
+  heightPct: number
+  /**
+   * Free-form position override, % of canvas. Template mode uses `pos.y`
+   * (top edge); upload mode uses `pos.x`/`pos.y` (top-left). null = derive
+   * from `placement`. Set by dragging on the Stage.
+   */
+  pos: PointPct | null
+  template: BannerTemplateState
+  upload: BannerUploadState
+}
+
 export interface LayoutState {
   mode: SplitMode
   aspect: AspectId
@@ -200,6 +249,29 @@ export const DEFAULT_LOGO: LogoState = {
   opacity: 0.9,
   padding: 24,
   burnIn: true,
+}
+
+export const DEFAULT_BANNER: BannerState = {
+  enabled: false,
+  mode: 'template',
+  placement: 'bottom',
+  heightPct: 16,
+  pos: null,
+  template: {
+    headline: 'وزیراعلیٰ پنجاب [نام] کی ہدایت پر',
+    tagTitle: 'CM PUNJAB',
+    tagName: '[NAME]',
+    caption: 'یہاں اپنی خبر کا متن لکھیں — یہ حصہ مکمل طور پر قابلِ ترمیم ہے۔',
+    emblem: { img: null, url: null, name: null },
+    photo: { img: null, url: null, name: null },
+  },
+  upload: {
+    img: null,
+    url: null,
+    name: null,
+    widthPct: 80,
+    opacity: 1,
+  },
 }
 
 export const DEFAULT_LAYOUT: LayoutState = {

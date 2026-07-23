@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import type {
+  BannerState,
   CropRect,
   FooterCaptionState,
   HeaderCaptionState,
@@ -32,6 +33,7 @@ import type {
 import { clampCrop, fmtTime, isFullCrop, SPEEDS } from '@/lib/editor/types'
 import {
   badgeRects,
+  bannerRect,
   captionBlockRect,
   captionHitRects,
   logoRect,
@@ -214,6 +216,7 @@ export default function Stage({
   after,
   layout,
   logo,
+  banner,
   header,
   footer,
   transport,
@@ -223,6 +226,7 @@ export default function Stage({
   onCrop,
   onDivider,
   onLogoPatch,
+  onBannerPatch,
   onHeaderPatch,
   onFooterPatch,
   onLayoutPatch,
@@ -240,6 +244,7 @@ export default function Stage({
   after: SlotState
   layout: LayoutState
   logo: LogoState
+  banner: BannerState
   header: HeaderCaptionState
   footer: FooterCaptionState
   transport: TransportState
@@ -249,6 +254,7 @@ export default function Stage({
   onCrop: (side: Side, crop: CropRect | null) => void
   onDivider: (pct: number) => void
   onLogoPatch: (patch: Partial<LogoState>) => void
+  onBannerPatch: (patch: Partial<BannerState>) => void
   onHeaderPatch: (patch: Partial<HeaderCaptionState>) => void
   onFooterPatch: (patch: Partial<FooterCaptionState>) => void
   onLayoutPatch: (patch: Partial<LayoutState>) => void
@@ -266,6 +272,7 @@ export default function Stage({
   const [logoDrag, setLogoDrag] = useState(false)
   const [captionDrag, setCaptionDrag] = useState<'header' | 'footer' | null>(null)
   const [badgeDrag, setBadgeDrag] = useState<Side | null>(null)
+  const [bannerDrag, setBannerDrag] = useState(false)
   const [cropDraft, setCropDraft] = useState<CropRect>({ x: 0, y: 0, w: 1, h: 1 })
 
   // Fit canvas into the available stage area (preserving output aspect)
@@ -452,6 +459,61 @@ export default function Stage({
     setLogoDrag(false)
   }
 
+  // ---- banner drag (vertical for template, free-form for upload) ----
+  const bannerDragState = useRef<{
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    /** banner top-left (canvas px) at drag start */
+    rx: number
+    ry: number
+    rw: number
+    rh: number
+  } | null>(null)
+
+  const onBannerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    const r = bannerRect(banner, dims.w, dims.h)
+    if (!r) return
+    bannerDragState.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      rx: r.x,
+      ry: r.y,
+      rw: r.w,
+      rh: r.h,
+    }
+    setBannerDrag(true)
+  }
+  const onBannerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const st = bannerDragState.current
+    if (!st || st.pointerId !== e.pointerId) return
+    const dxCanvas = (e.clientX - st.startClientX) / sx
+    const dyCanvas = (e.clientY - st.startClientY) / sx
+    const maxY = Math.max(0, dims.h - st.rh)
+    const ny = clampNum(st.ry + dyCanvas, 0, maxY)
+    if (banner.mode === 'template') {
+      // full-width strip — vertical drag only
+      onBannerPatch({ pos: { x: 50, y: Math.round((ny / dims.h) * 1000) / 10 } })
+    } else {
+      const maxX = Math.max(0, dims.w - st.rw)
+      const nx = clampNum(st.rx + dxCanvas, 0, maxX)
+      onBannerPatch({
+        pos: {
+          x: Math.round((nx / dims.w) * 1000) / 10,
+          y: Math.round((ny / dims.h) * 1000) / 10,
+        },
+      })
+    }
+  }
+  const onBannerUp = () => {
+    bannerDragState.current = null
+    setBannerDrag(false)
+  }
+
   // ---- crop mode ----
   const cropDragState = useRef<CropDrag | null>(null)
   const cropSlot = cropMode === 'before' ? before : cropMode === 'after' ? after : null
@@ -560,6 +622,7 @@ export default function Stage({
 
   const bothEmpty = !before.media && !after.media
   const lRect = logo.img ? logoRect(logo, dims.w, dims.h) : null
+  const bRect = banner.enabled ? bannerRect(banner, dims.w, dims.h) : null
   const capRects = captionHitRects(header, footer, dims.w, dims.h)
   const badges = badgeRects(layout, dims.w, dims.h)
   const overlaysEnabled = !bothEmpty && !cropMode
@@ -738,6 +801,29 @@ export default function Stage({
               aria-label="Resize logo"
             />
           </div>
+        )}
+
+        {/* banner drag overlay */}
+        {overlaysEnabled && bRect && (
+          <div
+            role="presentation"
+            aria-label="Move emblem banner"
+            onPointerDown={onBannerDown}
+            onPointerMove={onBannerMove}
+            onPointerUp={onBannerUp}
+            className={cn(
+              'absolute z-[18] touch-none rounded-md border border-transparent transition-colors',
+              bannerDrag ? 'cursor-grabbing' : 'cursor-grab',
+              'hover:border-dashed hover:border-ink/30',
+              bannerDrag && 'border-dashed border-after/60',
+            )}
+            style={{
+              left: bRect.x * sx,
+              top: bRect.y * sx,
+              width: bRect.w * sx,
+              height: bRect.h * sx,
+            }}
+          />
         )}
 
         {/* snap grid while dragging the logo */}
