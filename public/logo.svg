@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- SplitFrame mark: rounded square split vertically, left half cyan outline, right half lime fill -->
+  <path d="M256 96 L160 96 A64 64 0 0 0 96 160 L96 352 A64 64 0 0 0 160 416 L256 416 Z"
+        fill="none" stroke="#4CC9F0" stroke-width="16" stroke-linejoin="round"/>
+  <path d="M256 96 L352 96 A64 64 0 0 1 416 160 L416 352 A64 64 0 0 1 352 416 L256 416 Z"
+        fill="#B8F04A"/>
+</svg>

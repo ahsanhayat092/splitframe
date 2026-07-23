@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* SplitFrame design tokens (design.md §1) */
+    --bg-0: #0A0B0E;
+    --bg-1: #101218;
+    --bg-2: #161922;
+    --bg-3: #1D212D;
+    --line: #242836;
+    --line-strong: #333848;
+    --ink: #F2F4F8;
+    --ink-2: #A9B0C0;
+    --ink-3: #6B7280;
+    --before: #4CC9F0;
+    --before-dim: #4CC9F01F;
+    --after: #B8F04A;
+    --after-dim: #B8F04A1F;
+    --after-ink: #101300;
+    --warn: #FF6B6B;
+
+    /* shadcn/ui semantic variables (HSL channel values) — dark editing suite */
+    --background: 225 18% 5%;
+    --foreground: 220 30% 96%;
+    --card: 225 20% 8%;
+    --card-foreground: 220 30% 96%;
+    --popover: 225 20% 8%;
+    --popover-foreground: 220 30% 96%;
+    --primary: 80 85% 62%;
+    --primary-foreground: 70 100% 4%;
+    --secondary: 225 21% 11%;
+    --secondary-foreground: 220 30% 96%;
+    --muted: 225 21% 11%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 225 22% 15%;
+    --accent-foreground: 220 30% 96%;
+    --destructive: 0 100% 71%;
+    --destructive-foreground: 220 30% 96%;
+    --border: 227 20% 18%;
+    --input: 227 20% 18%;
+    --ring: 80 85% 62%;
+    --radius: 0.5rem;
+    --sidebar-background: 225 18% 5%;
+    --sidebar-foreground: 220 30% 96%;
+    --sidebar-primary: 80 85% 62%;
+    --sidebar-primary-foreground: 70 100% 4%;
+    --sidebar-accent: 225 22% 15%;
+    --sidebar-accent-foreground: 220 30% 96%;
+    --sidebar-border: 227 20% 18%;
+    --sidebar-ring: 80 85% 62%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  ::selection {
+    background: rgba(184, 240, 74, 0.25);
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--after);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Dual-glow ambient gradient (cyan left / lime right) over bg-0 — design.md §1 */
+  .ambient-dual-glow {
+    background:
+      radial-gradient(60% 60% at 12% 18%, rgba(76, 201, 240, 0.14), transparent 70%),
+      radial-gradient(60% 60% at 88% 82%, rgba(184, 240, 74, 0.12), transparent 70%),
+      #0A0B0E;
+  }
+  .ambient-dual-glow-mirrored {
+    background:
+      radial-gradient(60% 60% at 88% 18%, rgba(76, 201, 240, 0.14), transparent 70%),
+      radial-gradient(60% 60% at 12% 82%, rgba(184, 240, 74, 0.12), transparent 70%),
+      #0A0B0E;
+  }
+  /* Faint checkerboard "transparency grid" texture — footer (design.md §5.2) */
+  .checkerboard-faint {
+    background-image:
+      linear-gradient(45deg, rgba(242, 244, 248, 0.03) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(242, 244, 248, 0.03) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(242, 244, 248, 0.03) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(242, 244, 248, 0.03) 75%);
+    background-size: 24px 24px;
+    background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+  }
+  .text-gradient-split {
+    background: linear-gradient(90deg, var(--before), var(--after));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    .animate-ambient-drift,
+    .animate-glow-pulse,
+    .animate-pulse-dot,
+    .animate-demo-wipe,
+    .animate-demo-wipe-clip {
+      animation: none;
+    }
+  }
+}

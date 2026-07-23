@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" width="480" height="300">
+  <!-- Two empty film frames side by side, cyan left / lime right, dashed plus in each -->
+  <g fill="none" stroke-linecap="round">
+    <!-- Left film frame (before / cyan) -->
+    <rect x="42" y="70" width="176" height="160" rx="10" stroke="#4CC9F0" stroke-width="3"/>
+    <g fill="#4CC9F0" stroke="none" opacity="0.55">
+      <rect x="56" y="80" width="12" height="8" rx="2"/>
+      <rect x="80" y="80" width="12" height="8" rx="2"/>
+      <rect x="104" y="80" width="12" height="8" rx="2"/>
+      <rect x="128" y="80" width="12" height="8" rx="2"/>
+      <rect x="152" y="80" width="12" height="8" rx="2"/>
+      <rect x="176" y="80" width="12" height="8" rx="2"/>
+      <rect x="56" y="212" width="12" height="8" rx="2"/>
+      <rect x="80" y="212" width="12" height="8" rx="2"/>
+      <rect x="104" y="212" width="12" height="8" rx="2"/>
+      <rect x="128" y="212" width="12" height="8" rx="2"/>
+      <rect x="152" y="212" width="12" height="8" rx="2"/>
+      <rect x="176" y="212" width="12" height="8" rx="2"/>
+    </g>
+    <path d="M130 132 L130 168 M112 150 L148 150" stroke="#4CC9F0" stroke-width="3" stroke-dasharray="6 6"/>
+
+    <!-- Right film frame (after / lime) -->
+    <rect x="262" y="70" width="176" height="160" rx="10" stroke="#B8F04A" stroke-width="3"/>
+    <g fill="#B8F04A" stroke="none" opacity="0.55">
+      <rect x="276" y="80" width="12" height="8" rx="2"/>
+      <rect x="300" y="80" width="12" height="8" rx="2"/>
+      <rect x="324" y="80" width="12" height="8" rx="2"/>
+      <rect x="348" y="80" width="12" height="8" rx="2"/>
+      <rect x="372" y="80" width="12" height="8" rx="2"/>
+      <rect x="396" y="80" width="12" height="8" rx="2"/>
+      <rect x="276" y="212" width="12" height="8" rx="2"/>
+      <rect x="300" y="212" width="12" height="8" rx="2"/>
+      <rect x="324" y="212" width="12" height="8" rx="2"/>
+      <rect x="348" y="212" width="12" height="8" rx="2"/>
+      <rect x="372" y="212" width="12" height="8" rx="2"/>
+      <rect x="396" y="212" width="12" height="8" rx="2"/>
+    </g>
+    <path d="M350 132 L350 168 M332 150 L368 150" stroke="#B8F04A" stroke-width="3" stroke-dasharray="6 6"/>
+
+    <!-- Center split divider -->
+    <line x1="240" y1="86" x2="240" y2="214" stroke="#333848" stroke-width="2" stroke-dasharray="2 8"/>
+  </g>
+</svg>
