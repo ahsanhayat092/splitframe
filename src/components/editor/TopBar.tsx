@@ -2,8 +2,8 @@
  * Editor top bar (editor.md §1.1): back link, project name, status chip, Export.
  */
 import { Link } from 'react-router'
-import { ChevronLeft, CircleHelp, Download, Pencil } from 'lucide-react'
-import type { EditorStatus } from '@/lib/editor/types'
+import { ChevronLeft, CircleHelp, Download, Film, Pencil, Split } from 'lucide-react'
+import type { EditorMode, EditorStatus } from '@/lib/editor/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -40,18 +40,68 @@ function StatusChip({ status }: { status: EditorStatus }) {
   )
 }
 
+/** Compare ⇄ Single editor mode toggle (segmented control, TopBar). */
+function ModeSegmented({
+  mode,
+  onMode,
+}: {
+  mode: EditorMode
+  onMode: (m: EditorMode) => void
+}) {
+  const options: { value: EditorMode; label: string; icon: typeof Film; title: string }[] = [
+    { value: 'compare', label: 'Compare', icon: Split, title: 'Before/after comparison' },
+    { value: 'single', label: 'Single', icon: Film, title: 'Edit one video or image' },
+  ]
+  return (
+    <div
+      className="flex shrink-0 rounded-lg bg-surface-2 p-1"
+      role="radiogroup"
+      aria-label="Editor mode"
+    >
+      {options.map((o) => {
+        const active = o.value === mode
+        const Icon = o.icon
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            title={o.title}
+            onClick={() => onMode(o.value)}
+            className={cn(
+              'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150 sm:px-3',
+              active ? 'bg-surface-3 text-ink' : 'text-ink-2 hover:text-ink',
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            <span>{o.label}</span>
+            {active && (
+              <span className="absolute inset-x-2 -bottom-[3px] h-[2px] rounded-full bg-after" />
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function TopBar({
   projectName,
   onProjectName,
   status,
   canExport,
   onExport,
+  mode,
+  onMode,
 }: {
   projectName: string
   onProjectName: (v: string) => void
   status: EditorStatus
   canExport: boolean
   onExport: () => void
+  mode: EditorMode
+  onMode: (m: EditorMode) => void
 }) {
   return (
     <div className="flex h-14 items-center justify-between gap-3 border-b border-line bg-surface-1 px-3 sm:px-4">
@@ -69,9 +119,10 @@ export default function TopBar({
         </span>
       </Link>
 
-      {/* center: project name */}
-      <div className="flex min-w-0 flex-1 items-center justify-center">
-        <div className="group flex min-w-0 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 transition-colors focus-within:border-line-strong hover:border-line">
+      {/* center: mode toggle + project name */}
+      <div className="flex min-w-0 flex-1 items-center justify-center gap-2 sm:gap-3">
+        <ModeSegmented mode={mode} onMode={onMode} />
+        <div className="group hidden min-w-0 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 transition-colors focus-within:border-line-strong hover:border-line sm:flex">
           <input
             value={projectName}
             onChange={(e) => onProjectName(e.target.value)}
@@ -136,7 +187,7 @@ export default function TopBar({
             </TooltipTrigger>
             {!canExport && (
               <TooltipContent className="border-line bg-surface-3 font-mono text-xs text-ink-2">
-                Add media to both sides
+                {mode === 'single' ? 'Add a video or image' : 'Add media to both sides'}
               </TooltipContent>
             )}
           </Tooltip>

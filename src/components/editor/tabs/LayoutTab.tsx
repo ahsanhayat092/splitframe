@@ -7,6 +7,7 @@ import { Crop as CropIcon, Frame as FrameIcon } from 'lucide-react'
 import type {
   AspectId,
   CropRect,
+  EditorMode,
   FitMode,
   FrameAdjust,
   LayoutState,
@@ -100,6 +101,8 @@ function FitSelect({
 }
 
 export default function LayoutTab({
+  mode = 'compare',
+  onMode,
   layout,
   onPatch,
   before,
@@ -109,6 +112,9 @@ export default function LayoutTab({
   onAdjustMode,
   onAdjust,
 }: {
+  /** 'single' hides the split/divider/badge controls (meaningless for one media) */
+  mode?: EditorMode
+  onMode?: (m: EditorMode) => void
   layout: LayoutState
   onPatch: (patch: Partial<LayoutState>) => void
   before?: SlotState
@@ -118,40 +124,72 @@ export default function LayoutTab({
   onAdjustMode?: (side: Side | null) => void
   onAdjust?: (side: Side, adjust: FrameAdjust) => void
 }) {
+  const single = mode === 'single'
   const gapless = layout.mode === 'slider'
+  // single mode: crop/frame sections scope to the one media (the Before slot)
+  const slotRows: [Side, SlotState, string][] = single
+    ? before
+      ? [['before', before, 'Media']]
+      : []
+    : [
+        ...(before ? ([['before', before, 'Before']] as [Side, SlotState, string][]) : []),
+        ...(after ? ([['after', after, 'After']] as [Side, SlotState, string][]) : []),
+      ]
   return (
     <div className="space-y-3 p-4">
-      <PanelCard>
-        <Label className="mb-2">Split mode</Label>
-        <div className="grid grid-cols-3 gap-2">
-          {MODES.map((m) => {
-            const active = layout.mode === m.value
-            return (
-              <button
-                key={m.value}
-                type="button"
-                onClick={() => onPatch({ mode: m.value })}
-                className={cn(
-                  'rounded-lg border p-1.5 text-left transition-colors duration-150',
-                  active ? 'border-after/60 bg-surface-3' : 'border-line hover:border-line-strong',
-                )}
-              >
-                <motion.div
+      {onMode && (
+        <PanelCard>
+          <Label className="mb-2">Editor mode</Label>
+          <Segmented
+            options={[
+              { value: 'compare' as const, label: 'Compare' },
+              { value: 'single' as const, label: 'Single' },
+            ]}
+            value={mode}
+            onChange={onMode}
+          />
+          {single && (
+            <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
+              One media fills the whole frame — no split, divider or badges. All
+              overlays (captions, logo, banner) and export work the same.
+            </p>
+          )}
+        </PanelCard>
+      )}
+
+      {!single && (
+        <PanelCard>
+          <Label className="mb-2">Split mode</Label>
+          <div className="grid grid-cols-3 gap-2">
+            {MODES.map((m) => {
+              const active = layout.mode === m.value
+              return (
+                <button
                   key={m.value}
-                  initial={false}
-                  animate={active ? { rotate: [0, modeRotation(m.value)] } : { rotate: 0 }}
-                  transition={{ duration: 0.3 }}
+                  type="button"
+                  onClick={() => onPatch({ mode: m.value })}
+                  className={cn(
+                    'rounded-lg border p-1.5 text-left transition-colors duration-150',
+                    active ? 'border-after/60 bg-surface-3' : 'border-line hover:border-line-strong',
+                  )}
                 >
-                  <ModeDiagram mode={m.value} />
-                </motion.div>
-                <span className="mt-1.5 block text-center text-[11px] font-medium text-ink-2">
-                  {m.label}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </PanelCard>
+                  <motion.div
+                    key={m.value}
+                    initial={false}
+                    animate={active ? { rotate: [0, modeRotation(m.value)] } : { rotate: 0 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <ModeDiagram mode={m.value} />
+                  </motion.div>
+                  <span className="mt-1.5 block text-center text-[11px] font-medium text-ink-2">
+                    {m.label}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </PanelCard>
+      )}
 
       <PanelCard>
         <Label className="mb-2">Aspect ratio</Label>
@@ -162,38 +200,41 @@ export default function LayoutTab({
         />
       </PanelCard>
 
-      <PanelCard className="space-y-4">
-        <SliderRow
-          label="Divider position"
-          value={Math.round(layout.divider)}
-          min={5}
-          max={95}
-          onChange={(v) => onPatch({ divider: v })}
-          format={(v) => `${v}%`}
-          accent="split"
-        />
-        <div className={cn(gapless && 'pointer-events-none opacity-40')}>
+      {!single && (
+        <PanelCard className="space-y-4">
           <SliderRow
-            label="Gap"
-            value={layout.gap}
-            min={0}
-            max={16}
-            onChange={(v) => onPatch({ gap: v })}
-            format={(v) => `${v}px`}
+            label="Divider position"
+            value={Math.round(layout.divider)}
+            min={5}
+            max={95}
+            onChange={(v) => onPatch({ divider: v })}
+            format={(v) => `${v}%`}
+            accent="split"
           />
-          <div className="mt-3 flex items-center justify-between">
-            <Label>Gutter color</Label>
-            <input
-              type="color"
-              value={layout.gapColor}
-              onChange={(e) => onPatch({ gapColor: e.target.value })}
-              className="h-6 w-10 cursor-pointer rounded border border-line-strong bg-transparent"
-              aria-label="Gutter color"
+          <div className={cn(gapless && 'pointer-events-none opacity-40')}>
+            <SliderRow
+              label="Gap"
+              value={layout.gap}
+              min={0}
+              max={16}
+              onChange={(v) => onPatch({ gap: v })}
+              format={(v) => `${v}px`}
             />
+            <div className="mt-3 flex items-center justify-between">
+              <Label>Gutter color</Label>
+              <input
+                type="color"
+                value={layout.gapColor}
+                onChange={(e) => onPatch({ gapColor: e.target.value })}
+                className="h-6 w-10 cursor-pointer rounded border border-line-strong bg-transparent"
+                aria-label="Gutter color"
+              />
+            </div>
           </div>
-        </div>
-      </PanelCard>
+        </PanelCard>
+      )}
 
+      {!single && (
       <PanelCard>
         <div className="mb-3 flex items-center justify-between">
           <Label>Before/After badges</Label>
@@ -256,17 +297,13 @@ export default function LayoutTab({
           </div>
         )}
       </PanelCard>
+      )}
 
-      {before && after && onCropMode && (
+      {slotRows.length > 0 && onCropMode && (
         <PanelCard>
           <Label className="mb-2">Crop</Label>
           <div className="space-y-2">
-            {(
-              [
-                ['before', before, 'Before'] as const,
-                ['after', after, 'After'] as const,
-              ]
-            ).map(([side, slot, label]) => {
+            {slotRows.map(([side, slot, label]) => {
               const cropped = !isFullCrop(slot.crop)
               return (
                 <div key={side} className="flex items-center justify-between gap-2">
@@ -276,7 +313,7 @@ export default function LayoutTab({
                       <span
                         className={cn(
                           'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-                          side === 'before'
+                          side === 'before' && !single
                             ? 'border-before/60 bg-before-dim text-before'
                             : 'border-after/60 bg-after-dim text-after',
                         )}
@@ -313,21 +350,16 @@ export default function LayoutTab({
             })}
           </div>
           <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
-            Crop is per side and carries into the export.
+            {single ? 'Crop carries into the export.' : 'Crop is per side and carries into the export.'}
           </p>
         </PanelCard>
       )}
 
-      {before && after && onAdjustMode && (
+      {slotRows.length > 0 && onAdjustMode && (
         <PanelCard>
           <Label className="mb-2">Frame · zoom &amp; pan</Label>
           <div className="space-y-4">
-            {(
-              [
-                ['before', before, 'Before'] as const,
-                ['after', after, 'After'] as const,
-              ]
-            ).map(([side, slot, label]) => {
+            {slotRows.map(([side, slot, label]) => {
               const zoomed = !isDefaultAdjust(slot.adjust)
               return (
                 <div key={side} className={cn('space-y-2', !slot.media && 'pointer-events-none opacity-40')}>
@@ -338,7 +370,7 @@ export default function LayoutTab({
                         <span
                           className={cn(
                             'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-                            side === 'before'
+                            side === 'before' && !single
                               ? 'border-before/60 bg-before-dim text-before'
                               : 'border-after/60 bg-after-dim text-after',
                           )}
@@ -382,15 +414,22 @@ export default function LayoutTab({
             })}
           </div>
           <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-3">
-            Only what falls inside the frame is compared and exported. Zoom applies after crop; a
-            manual frame pauses Ken Burns for that side.
+            {single
+              ? 'Only what falls inside the frame is exported. Zoom applies after crop; a manual frame pauses Ken Burns.'
+              : 'Only what falls inside the frame is compared and exported. Zoom applies after crop; a manual frame pauses Ken Burns for that side.'}
           </p>
         </PanelCard>
       )}
 
       <PanelCard className="space-y-3">
-        <FitSelect label="Fit · before" value={layout.fitBefore} onChange={(v) => onPatch({ fitBefore: v })} />
-        <FitSelect label="Fit · after" value={layout.fitAfter} onChange={(v) => onPatch({ fitAfter: v })} />
+        <FitSelect
+          label={single ? 'Fit' : 'Fit · before'}
+          value={layout.fitBefore}
+          onChange={(v) => onPatch({ fitBefore: v })}
+        />
+        {!single && (
+          <FitSelect label="Fit · after" value={layout.fitAfter} onChange={(v) => onPatch({ fitAfter: v })} />
+        )}
       </PanelCard>
 
       <PanelCard>
@@ -414,11 +453,13 @@ export default function LayoutTab({
         )}
       </PanelCard>
 
-      {/* gutter swatch presets */}
-      <div className="flex items-center justify-between px-1">
-        <span className="font-mono text-[11px] text-ink-3">Gutter presets</span>
-        <ColorSwatches value={layout.gapColor} onChange={(v) => onPatch({ gapColor: v })} />
-      </div>
+      {/* gutter swatch presets (compare mode only) */}
+      {!single && (
+        <div className="flex items-center justify-between px-1">
+          <span className="font-mono text-[11px] text-ink-3">Gutter presets</span>
+          <ColorSwatches value={layout.gapColor} onChange={(v) => onPatch({ gapColor: v })} />
+        </div>
+      )}
     </div>
   )
 }

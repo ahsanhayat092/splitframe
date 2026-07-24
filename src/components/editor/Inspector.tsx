@@ -14,6 +14,7 @@ import type {
   AudioTrackState,
   BannerState,
   CropRect,
+  EditorMode,
   ExportSettings,
   FooterCaptionState,
   FrameAdjust,
@@ -22,6 +23,7 @@ import type {
   LogoState,
   Side,
   SlotState,
+  TextBox,
 } from '@/lib/editor/types'
 import CaptionsTab from './tabs/CaptionsTab'
 import LogoTab from './tabs/LogoTab'
@@ -39,6 +41,9 @@ export interface InspectorProps {
   onTab: (t: InspectorTabId) => void
   /** increments to flash the captions tab (canvas click-to-edit) */
   flashCaptions: number
+  /** editor mode — Layout/Audio tabs adapt their sections */
+  mode: EditorMode
+  onMode: (m: EditorMode) => void
   header: HeaderCaptionState
   footer: FooterCaptionState
   onHeaderPatch: (p: Partial<HeaderCaptionState>) => void
@@ -59,6 +64,12 @@ export interface InspectorProps {
   onBannerPatch: (p: Partial<BannerState>) => void
   onBannerImage: (slot: BannerImageSlotId, f: File) => void
   onBannerImageRemove: (slot: BannerImageSlotId) => void
+  textBoxes: TextBox[]
+  selectedTextBoxId: string | null
+  onTextBoxAdd: () => void
+  onTextBoxPatch: (id: string, p: Partial<TextBox>) => void
+  onTextBoxRemove: (id: string) => void
+  onTextBoxSelect: (id: string | null) => void
   before: SlotState
   after: SlotState
   onCropMode: (side: Side | null) => void
@@ -99,6 +110,12 @@ export default function Inspector(props: InspectorProps) {
       footer={props.footer}
       onHeaderPatch={props.onHeaderPatch}
       onFooterPatch={props.onFooterPatch}
+      textBoxes={props.textBoxes}
+      selectedTextBoxId={props.selectedTextBoxId}
+      onTextBoxAdd={props.onTextBoxAdd}
+      onTextBoxPatch={props.onTextBoxPatch}
+      onTextBoxRemove={props.onTextBoxRemove}
+      onTextBoxSelect={props.onTextBoxSelect}
     />
   )
   const logoPanel = (
@@ -111,6 +128,8 @@ export default function Inspector(props: InspectorProps) {
   )
   const layoutPanel = (
     <LayoutTab
+      mode={props.mode}
+      onMode={props.onMode}
       layout={props.layout}
       onPatch={props.onLayoutPatch}
       before={props.before}
@@ -123,6 +142,7 @@ export default function Inspector(props: InspectorProps) {
   )
   const audioPanel = (
     <AudioTab
+      mode={props.mode}
       audio={props.audio}
       anyVideo={props.anyVideo}
       onPatch={props.onAudioPatch}

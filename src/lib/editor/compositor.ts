@@ -8,6 +8,7 @@
 import type {
   BannerState,
   CropRect,
+  EditorMode,
   FitMode,
   FooterCaptionState,
   FrameAdjust,
@@ -17,8 +18,10 @@ import type {
   Side,
   SlotMedia,
   SlotState,
+  TextBox,
 } from './types'
 import {
+  TEXT_BOX_FONT_STACK,
   adjustSourceRect,
   badgeFontPct,
   captionFontPct,
@@ -38,11 +41,15 @@ export interface Rect {
 export interface FrameSource {
   before: SlotState
   after: SlotState
+  /** 'compare' (default) renders the split; 'single' renders `before` full-frame. */
+  mode?: EditorMode
   layout: LayoutState
   header: HeaderCaptionState
   footer: FooterCaptionState
   logo: LogoState
   banner: BannerState
+  /** free-floating text boxes (canvas-level, mode-agnostic); default [] */
+  textBoxes?: TextBox[]
   /** side currently being cropped on the Stage — rendered uncropped (preview only) */
   cropEditing?: Side | null
   /** side currently in adjust-frame mode — Ken Burns paused for it (preview only) */
@@ -98,6 +105,21 @@ export function paneRects(layout: LayoutState, W: number, H: number): { before: 
     before: { x: 0, y: 0, w: W, h: H },
     after: { x: 0, y: 0, w: W, h: H },
   }
+}
+
+/**
+ * On-canvas pane rect for a slot, honoring the editor mode: in 'single' mode
+ * the one media fills the whole frame (no split, divider or gap).
+ */
+export function slotPaneRect(
+  mode: EditorMode,
+  layout: LayoutState,
+  W: number,
+  H: number,
+  side: Side,
+): Rect {
+  if (mode === 'single') return { x: 0, y: 0, w: W, h: H }
+  return paneRects(layout, W, H)[side]
 }
 
 /** On-canvas logo rect — shared by the compositor and the interactive overlay. */
@@ -220,6 +242,78 @@ export function captionHitRects(
     return { x: 0, y: isFooter ? H - h : 0, w: W, h }
   }
   return { header: rectFor(header, false), footer: rectFor(footer, true) }
+}
+
+/* ----------------------------- text boxes ------------------------------- */
+
+/** Arabic / Hebrew / Nastaliq ranges — switches the canvas to RTL shaping. */
+const RTL_RE = /[\u0590-\u07FF\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/
+
+const textBoxFont = (box: TextBox, fs: number) =>
+  `${box.bold ? 700 : 500} ${fs}px ${TEXT_BOX_FONT_STACK[box.fontFamily]}`
+
+/** Logical lines of a text box (explicit \n breaks only — free-flowing). */
+function textBoxLines(box: TextBox): string[] {
+  return box.text.split('\n')
+}
+
+/**
+ * On-canvas rect of a text box's text block — the block is CENTERED on the
+ * box anchor (x%, y%) and clamped inside the canvas. Multi-line: line-height
+ * 1.25. Shared by the compositor and the Stage drag/select overlays.
+ */
+export function textBoxRect(box: TextBox, W: number, H: number): Rect {
+  const fs = Math.max(8, (H * box.sizePct) / 100)
+  const lh = fs * 1.25
+  const lines = textBoxLines(box)
+  let width = 0
+  const c = mctx()
+  if (c) {
+    c.font = textBoxFont(box, fs)
+    for (const line of lines) width = Math.max(width, c.measureText(line).width)
+  }
+  if (!width) width = fs * 3 // measurement unavailable / empty text
+  const w = Math.min(Math.max(width, fs * 1.5), W * 0.96)
+  const h = Math.max(lh, lines.length * lh)
+  const cx = (box.x / 100) * W
+  const cy = (box.y / 100) * H
+  const x = Math.min(Math.max(cx - w / 2, 0), Math.max(0, W - w))
+  const y = Math.min(Math.max(cy - h / 2, 0), Math.max(0, H - h))
+  return { x, y, w, h }
+}
+
+/**
+ * Draw the free text boxes. Rendered AFTER media + badges + captions but
+ * BEFORE the logo, banner and safe-area guides — boxes sit above the base
+ * layers (they are user-authored content) while the brand/logo/banner layers
+ * keep top billing when they overlap. Burned into every export (WYSIWYG).
+ */
+function drawTextBoxes(ctx: CanvasRenderingContext2D, boxes: TextBox[], W: number, H: number) {
+  for (const box of boxes) {
+    const lines = textBoxLines(box)
+    if (!lines.some((l) => l.trim())) continue
+    const r = textBoxRect(box, W, H)
+    if (r.w <= 0 || r.h <= 0) continue
+    const fs = Math.max(8, (H * box.sizePct) / 100)
+    const lh = fs * 1.25
+    const rtl = lines.some((l) => RTL_RE.test(l))
+    const tx = box.align === 'left' ? r.x : box.align === 'right' ? r.x + r.w : r.x + r.w / 2
+    ctx.save()
+    ctx.font = textBoxFont(box, fs)
+    ctx.fillStyle = box.color
+    ctx.textAlign = box.align
+    ctx.textBaseline = 'middle'
+    ctx.direction = rtl ? 'rtl' : 'ltr'
+    // soft shadow keeps text readable over any media (same as dragged captions)
+    ctx.shadowColor = 'rgba(0,0,0,0.65)'
+    ctx.shadowBlur = Math.max(4, fs * 0.22)
+    let ly = r.y + r.h / 2 - ((lines.length - 1) * lh) / 2
+    for (const line of lines) {
+      ctx.fillText(line, tx, ly)
+      ly += lh
+    }
+    ctx.restore()
+  }
 }
 
 /* ------------------------------ pieces --------------------------------- */
@@ -912,9 +1006,10 @@ export function drawFrame(
 ) {
   const s = H / 1080
   const { layout } = src
+  const single = src.mode === 'single'
 
-  // base / gutter color
-  ctx.fillStyle = layout.mode === 'slider' ? BG : layout.gapColor
+  // base / gutter color (single mode has no gutter — plain backdrop)
+  ctx.fillStyle = single || layout.mode === 'slider' ? BG : layout.gapColor
   ctx.fillRect(0, 0, W, H)
 
   const panes = paneRects(layout, W, H)
@@ -943,7 +1038,16 @@ export function drawFrame(
         ? layout.fitBefore
         : layout.fitAfter
 
-  if (layout.mode === 'slider') {
+  if (single) {
+    // Single mode: the one media (the Before slot) fills the full frame —
+    // no second pane, divider, gap or wipe. Crop + frame adjust + fit apply.
+    const full: Rect = { x: 0, y: 0, w: W, h: H }
+    if (beforeMedia) {
+      drawMediaInto(ctx, beforeMedia, full, fitFor('before'), zoomFor(beforeMedia, src.before.imageDuration, 'before'), cropFor('before', src.before), adjustFor('before', src.before))
+    } else {
+      drawEmptyPane(ctx, full, 'MEDIA', AFTER, H)
+    }
+  } else if (layout.mode === 'slider') {
     const splitX = W * (layout.divider / 100)
     // before covers the whole canvas, clipped to the left of the wipe
     if (beforeMedia) {
@@ -980,27 +1084,29 @@ export function drawFrame(
   }
 
   // divider wipe line (handle itself is an HTML overlay in preview; the line is burned in)
-  const lineW = Math.max(1.5, 2 * s)
-  const d = layout.divider / 100
-  ctx.save()
-  let grad: CanvasGradient
-  if (layout.mode === 'stacked') {
-    grad = ctx.createLinearGradient(0, 0, W, 0)
-    grad.addColorStop(0, BEFORE)
-    grad.addColorStop(1, AFTER)
-    ctx.fillStyle = grad
-    ctx.fillRect(0, H * d - lineW / 2, W, lineW)
-  } else {
-    grad = ctx.createLinearGradient(0, 0, 0, H)
-    grad.addColorStop(0, BEFORE)
-    grad.addColorStop(1, AFTER)
-    ctx.fillStyle = grad
-    ctx.fillRect(W * d - lineW / 2, 0, lineW, H)
+  if (!single) {
+    const lineW = Math.max(1.5, 2 * s)
+    const d = layout.divider / 100
+    ctx.save()
+    let grad: CanvasGradient
+    if (layout.mode === 'stacked') {
+      grad = ctx.createLinearGradient(0, 0, W, 0)
+      grad.addColorStop(0, BEFORE)
+      grad.addColorStop(1, AFTER)
+      ctx.fillStyle = grad
+      ctx.fillRect(0, H * d - lineW / 2, W, lineW)
+    } else {
+      grad = ctx.createLinearGradient(0, 0, 0, H)
+      grad.addColorStop(0, BEFORE)
+      grad.addColorStop(1, AFTER)
+      ctx.fillStyle = grad
+      ctx.fillRect(W * d - lineW / 2, 0, lineW, H)
+    }
+    ctx.restore()
   }
-  ctx.restore()
 
-  // Before / After badges (burned in when enabled)
-  if (layout.badges) {
+  // Before / After badges (burned in when enabled; meaningless in single mode)
+  if (layout.badges && !single) {
     const br = badgeRects(layout, W, H)
     if (br.before) {
       drawBadge(ctx, badgeText(layout, 'before'), br.before, BEFORE, 'rgba(76,201,240,0.14)', H, badgeFontPct(layout, 'before'))
@@ -1013,6 +1119,9 @@ export function drawFrame(
   // captions
   drawCaptionBar(ctx, src.header, W, H, false)
   drawCaptionBar(ctx, src.footer, W, H, true)
+
+  // free text boxes — above media/badges/captions, below logo/banner/guides
+  if (src.textBoxes?.length) drawTextBoxes(ctx, src.textBoxes, W, H)
 
   // logo overlay — drawn unless export + preview-only
   if (src.logo.img && (!opts.forExport || src.logo.burnIn)) {

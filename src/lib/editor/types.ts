@@ -4,6 +4,8 @@
 
 export type MediaKind = 'video' | 'image'
 export type Side = 'before' | 'after'
+/** Editor mode — dual-media comparison vs. single-media editing. */
+export type EditorMode = 'compare' | 'single'
 export type SplitMode = 'side' | 'stacked' | 'slider'
 export type AspectId = '16:9' | '1:1' | '9:16' | '4:5'
 export type FitMode = 'cover' | 'contain' | 'fill'
@@ -67,6 +69,76 @@ export interface SlotState {
   /** Zoom & pan window, applied AFTER the crop. */
   adjust: FrameAdjust
   loading: boolean
+}
+
+/* ----------------------------- text boxes ------------------------------ */
+
+/** Fonts available to free text boxes (first three are app fonts). */
+export type TextBoxFont = 'space-grotesk' | 'inter' | 'jetbrains-mono' | 'nastaliq' | 'serif'
+export type TextBoxAlign = 'left' | 'center' | 'right'
+
+/**
+ * A free-floating text box — unlimited count, canvas-level overlay that works
+ * identically in Compare and Single modes. Positions are the text-block CENTER
+ * in % of canvas width/height, sizes in % of canvas height → scale-correct at
+ * any export resolution.
+ */
+export interface TextBox {
+  id: string
+  text: string
+  /** center, % of canvas width */
+  x: number
+  /** center, % of canvas height */
+  y: number
+  fontFamily: TextBoxFont
+  /** font size as % of canvas height, 2..15 */
+  sizePct: number
+  color: string
+  bold: boolean
+  align: TextBoxAlign
+}
+
+/** Canvas font-family stack per text-box font id (compositor + DOM previews). */
+export const TEXT_BOX_FONT_STACK: Record<TextBoxFont, string> = {
+  'space-grotesk': '"Space Grotesk", sans-serif',
+  inter: 'Inter, sans-serif',
+  'jetbrains-mono': '"JetBrains Mono", monospace',
+  nastaliq: '"Noto Nastaliq Urdu", "Jameel Noori Nastaleeq", serif',
+  serif: 'Georgia, "Times New Roman", serif',
+}
+
+export const TEXT_BOX_MIN_SIZE_PCT = 2
+export const TEXT_BOX_MAX_SIZE_PCT = 15
+export const DEFAULT_TEXT_BOX_SIZE_PCT = 5
+
+let textBoxCounter = 0
+
+/** Center offsets (%) so consecutively added boxes don't stack on each other. */
+const TEXT_BOX_STAGGER: [number, number][] = [
+  [0, 0],
+  [9, 11],
+  [-11, -13],
+  [13, -9],
+  [-13, 11],
+  [11, 15],
+  [-9, -17],
+  [15, 13],
+]
+
+/** New text box with sane defaults, centered on the canvas (staggered per add). */
+export function makeTextBox(): TextBox {
+  const [dx, dy] = TEXT_BOX_STAGGER[textBoxCounter % TEXT_BOX_STAGGER.length]
+  return {
+    id: `tb_${Date.now().toString(36)}_${++textBoxCounter}`,
+    text: 'New text',
+    x: 50 + dx,
+    y: 50 + dy,
+    fontFamily: 'space-grotesk',
+    sizePct: DEFAULT_TEXT_BOX_SIZE_PCT,
+    color: '#F2F4F8',
+    bold: false,
+    align: 'center',
+  }
 }
 
 export interface CaptionStyleState {
@@ -480,8 +552,17 @@ export function timelineDuration(
   before: SlotState,
   after: SlotState,
   settings: ExportSettings,
+  mode: EditorMode = 'compare',
 ): number {
   const db = slotDuration(before)
+  if (mode === 'single') {
+    // single mode: the one media is the duration basis; custom overrides
+    if (!before.media) return 0
+    if (settings.durationMode === 'custom') {
+      return Math.min(60, Math.max(1, settings.customDuration))
+    }
+    return db
+  }
   const da = slotDuration(after)
   if (!before.media && !after.media) return 0
   if (!before.media) return da

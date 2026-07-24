@@ -136,13 +136,16 @@ const SWATCHES = ['#F2F4F8', '#B8F04A', '#4CC9F0', '#FFD166']
 export function ColorSwatches({
   value,
   onChange,
+  swatches = SWATCHES,
 }: {
   value: string
   onChange: (v: string) => void
+  /** token palette to offer before the custom-hex input */
+  swatches?: string[]
 }) {
   return (
     <div className="flex items-center gap-2">
-      {SWATCHES.map((c) => (
+      {swatches.map((c) => (
         <button
           key={c}
           type="button"
@@ -161,7 +164,7 @@ export function ColorSwatches({
         className="relative h-6 w-6 cursor-pointer overflow-hidden rounded-full border border-dashed border-line-strong transition-colors hover:border-ink-3"
         title="Custom color"
         style={{
-          background: SWATCHES.some((s) => s.toLowerCase() === value.toLowerCase())
+          background: swatches.some((s) => s.toLowerCase() === value.toLowerCase())
             ? undefined
             : value,
         }}
@@ -172,7 +175,7 @@ export function ColorSwatches({
           onChange={(e) => onChange(e.target.value)}
           className="absolute inset-0 cursor-pointer opacity-0"
         />
-        {!SWATCHES.some((s) => s.toLowerCase() === value.toLowerCase()) ? null : (
+        {!swatches.some((s) => s.toLowerCase() === value.toLowerCase()) ? null : (
           <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-ink-3">
             +
           </span>

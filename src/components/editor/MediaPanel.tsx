@@ -17,22 +17,24 @@ import {
   Split,
   Trash2,
 } from 'lucide-react'
-import type { Side, SlotState } from '@/lib/editor/types'
+import type { EditorMode, Side, SlotState } from '@/lib/editor/types'
 import { fmtTimecode, isDefaultAdjust, isFullCrop } from '@/lib/editor/types'
 import { truncateMiddle } from '@/lib/editor/media'
 import { cn } from '@/lib/utils'
 
-function SlotBadge({ side }: { side: Side }) {
+function SlotBadge({ side, single }: { side: Side; single?: boolean }) {
   return (
     <span
       className={cn(
         'inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium tracking-[0.02em]',
-        side === 'before'
-          ? 'border-before/60 bg-before-dim text-before'
-          : 'border-after/60 bg-after-dim text-after',
+        single
+          ? 'border-after/60 bg-after-dim text-after'
+          : side === 'before'
+            ? 'border-before/60 bg-before-dim text-before'
+            : 'border-after/60 bg-after-dim text-after',
       )}
     >
-      {side === 'before' ? 'BEFORE' : 'AFTER'}
+      {single ? 'MEDIA' : side === 'before' ? 'BEFORE' : 'AFTER'}
     </span>
   )
 }
@@ -92,6 +94,7 @@ function SlotCard({
   onAdjustMode,
   registerBrowse,
   flipping,
+  single,
 }: {
   side: Side
   slot: SlotState
@@ -102,10 +105,12 @@ function SlotCard({
   onAdjustMode: (side: Side | null) => void
   registerBrowse: (side: Side, fn: () => void) => void
   flipping: boolean
+  /** single-media mode: neutral/lime treatment, "MEDIA" label */
+  single?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
-  const accent = side === 'before'
+  const accent = side === 'before' && !single
 
   const browse = () => inputRef.current?.click()
   registerBrowse(side, browse)
@@ -186,7 +191,7 @@ function SlotCard({
                   <div className="checkerboard-faint h-full w-full" />
                 )}
                 <div className="absolute left-2 top-2">
-                  <SlotBadge side={side} />
+                  <SlotBadge side={side} single={single} />
                 </div>
                 {slot.media.kind === 'video' && (
                   <span className="absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-ink">
@@ -288,7 +293,7 @@ function SlotCard({
             <div
               role="button"
               tabIndex={0}
-              aria-label={`Upload ${side} media`}
+              aria-label={single ? 'Upload media' : `Upload ${side} media`}
               onClick={browse}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') browse()
@@ -309,7 +314,7 @@ function SlotCard({
               )}
             >
               <div className="flex w-full items-center justify-between">
-                <SlotBadge side={side} />
+                <SlotBadge side={side} single={single} />
                 <img src="/empty-state.svg" alt="" className="h-10 w-16 opacity-70" />
               </div>
               {slot.loading ? (
@@ -335,6 +340,7 @@ function SlotCard({
 }
 
 export default function MediaPanel({
+  mode = 'compare',
   before,
   after,
   onFile,
@@ -345,6 +351,8 @@ export default function MediaPanel({
   onAdjustMode,
   registerBrowse,
 }: {
+  /** 'single' hides the After slot — one MEDIA card only */
+  mode?: EditorMode
   before: SlotState
   after: SlotState
   onFile: (side: Side, file: File) => void
@@ -356,8 +364,9 @@ export default function MediaPanel({
   registerBrowse: (side: Side, fn: () => void) => void
 }) {
   const [flipping, setFlipping] = useState(false)
+  const single = mode === 'single'
   const mixed =
-    before.media && after.media && before.media.kind !== after.media.kind
+    !single && before.media && after.media && before.media.kind !== after.media.kind
 
   const handleSwap = () => {
     if (flipping) return
@@ -375,7 +384,7 @@ export default function MediaPanel({
           Media
         </span>
         <h2 className="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink">
-          Sources
+          {single ? 'Source' : 'Sources'}
         </h2>
       </div>
 
@@ -389,28 +398,33 @@ export default function MediaPanel({
         onAdjustMode={onAdjustMode}
         registerBrowse={registerBrowse}
         flipping={flipping}
+        single={single}
       />
-      <SlotCard
-        side="after"
-        slot={after}
-        onFile={onFile}
-        onRemove={onRemove}
-        onImageDuration={onImageDuration}
-        onCrop={onCrop}
-        onAdjustMode={onAdjustMode}
-        registerBrowse={registerBrowse}
-        flipping={flipping}
-      />
+      {!single && (
+        <SlotCard
+          side="after"
+          slot={after}
+          onFile={onFile}
+          onRemove={onRemove}
+          onImageDuration={onImageDuration}
+          onCrop={onCrop}
+          onAdjustMode={onAdjustMode}
+          registerBrowse={registerBrowse}
+          flipping={flipping}
+        />
+      )}
 
-      <button
-        type="button"
-        onClick={handleSwap}
-        disabled={!before.media && !after.media}
-        className="flex items-center justify-center gap-2 rounded-full border border-line-strong px-4 py-2 text-sm font-semibold text-ink transition-all duration-150 hover:-translate-y-[1px] hover:bg-surface-2 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <ArrowLeftRight className="h-4 w-4" />
-        Swap sides
-      </button>
+      {!single && (
+        <button
+          type="button"
+          onClick={handleSwap}
+          disabled={!before.media && !after.media}
+          className="flex items-center justify-center gap-2 rounded-full border border-line-strong px-4 py-2 text-sm font-semibold text-ink transition-all duration-150 hover:-translate-y-[1px] hover:bg-surface-2 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ArrowLeftRight className="h-4 w-4" />
+          Swap sides
+        </button>
+      )}
 
       {mixed && (
         <motion.div

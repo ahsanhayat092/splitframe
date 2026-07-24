@@ -5,7 +5,7 @@
 import { useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { Music, Trash2, UploadCloud } from 'lucide-react'
-import type { AudioTrackState } from '@/lib/editor/types'
+import type { AudioTrackState, EditorMode } from '@/lib/editor/types'
 import { fmtTimecode } from '@/lib/editor/types'
 import { truncateMiddle } from '@/lib/editor/media'
 import { Switch } from '@/components/ui/switch'
@@ -14,12 +14,15 @@ import { Label, PanelCard, SliderRow } from '../controls'
 import { cn } from '@/lib/utils'
 
 export default function AudioTab({
+  mode = 'compare',
   audio,
   anyVideo,
   onPatch,
   onFile,
   onRemove,
 }: {
+  /** 'single' — original audio is the one video's own track (no L/R split) */
+  mode?: EditorMode
   audio: AudioTrackState
   /** true when either slot holds a video (original audio exists) */
   anyVideo: boolean
@@ -141,8 +144,9 @@ export default function AudioTab({
                 </span>
               </TooltipTrigger>
               <TooltipContent className="max-w-[220px] border-line bg-surface-3 text-xs text-ink-2">
-                Mix the videos' own audio (before → L, after → R) under the music.
-                Turn off to export music only.
+                {mode === 'single'
+                  ? "Mix the video's own audio under the music. Turn off to export music only."
+                  : "Mix the videos' own audio (before → L, after → R) under the music. Turn off to export music only."}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

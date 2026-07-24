@@ -526,8 +526,12 @@ export async function exportMP4(job: ExportJob): Promise<ExportOutput> {
 }
 
 export async function exportVideo(job: ExportJob): Promise<ExportOutput> {
-  // the banner's Nastaliq webfont must be registered before the first frame
-  if (job.source.banner?.enabled && job.source.banner.mode === 'template') {
+  // the Nastaliq webfont must be registered before the first frame — needed
+  // by the template banner AND by any text box using the Nastaliq font
+  const needsNastaliq =
+    (job.source.banner?.enabled && job.source.banner.mode === 'template') ||
+    !!job.source.textBoxes?.some((b) => b.fontFamily === 'nastaliq')
+  if (needsNastaliq) {
     job.onProgress(0, 'Loading Urdu font…')
     await ensureBannerFonts()
   }

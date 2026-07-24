@@ -9,6 +9,7 @@ import type {
   AudioTrackState,
   BannerState,
   CropRect,
+  EditorMode,
   EditorStatus,
   ExportSettings,
   FooterCaptionState,
@@ -18,6 +19,7 @@ import type {
   LogoState,
   Side,
   SlotState,
+  TextBox,
   TransportState,
 } from '@/lib/editor/types'
 import {
@@ -33,6 +35,7 @@ import {
   EMPTY_SLOT,
   classifyFile,
   isAudioFile,
+  makeTextBox,
   previewDims,
   slugify,
   timelineDuration,
@@ -97,12 +100,15 @@ export default function Editor() {
   const [footer, setFooter] = useState<FooterCaptionState>(DEFAULT_FOOTER)
   const [logo, setLogo] = useState<LogoState>(DEFAULT_LOGO)
   const [banner, setBanner] = useState<BannerState>(DEFAULT_BANNER)
+  const [textBoxes, setTextBoxes] = useState<TextBox[]>([])
+  const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null)
   const [layout, setLayout] = useState<LayoutState>(DEFAULT_LAYOUT)
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT)
   const [audio, setAudio] = useState<AudioTrackState>(DEFAULT_AUDIO)
   const [cropMode, setCropMode] = useState<Side | null>(null)
   const [adjustMode, setAdjustMode] = useState<Side | null>(null)
   const [transport, setTransport] = useState<TransportState>(DEFAULT_TRANSPORT)
+  const [mode, setMode] = useState<EditorMode>('compare')
   const [projectName, setProjectName] = useState('untitled-comparison')
   const [status, setStatus] = useState<EditorStatus>('ready')
   const [tab, setTab] = useState<InspectorTabId>('captions')
@@ -122,15 +128,15 @@ export default function Editor() {
   const toastId = useRef(0)
   const browseFns = useRef<Partial<Record<Side, () => void>>>({})
 
-  const timelineDur = timelineDuration(before, after, exportSettings)
-  const canExport = !!(before.media && after.media)
+  const timelineDur = timelineDuration(before, after, exportSettings, mode)
+  const canExport = mode === 'single' ? !!before.media : !!(before.media && after.media)
   const anyVideo = before.media?.kind === 'video' || after.media?.kind === 'video'
   const dims = previewDims(layout.aspect)
 
   // latest-state mirror for the rAF loop & imperative handlers
-  const stateRef = useRef({ before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, adjustMode, transport })
+  const stateRef = useRef({ before, after, header, footer, logo, banner, textBoxes, layout, exportSettings, audio, cropMode, adjustMode, transport, mode })
   useEffect(() => {
-    stateRef.current = { before, after, header, footer, logo, banner, layout, exportSettings, audio, cropMode, adjustMode, transport }
+    stateRef.current = { before, after, header, footer, logo, banner, textBoxes, layout, exportSettings, audio, cropMode, adjustMode, transport, mode }
   })
   const timelineDurRef = useRef(timelineDur)
   useEffect(() => {
@@ -140,11 +146,13 @@ export default function Editor() {
   const frameSource = (s = stateRef.current): FrameSource => ({
     before: s.before,
     after: s.after,
+    mode: s.mode,
     layout: s.layout,
     header: s.header,
     footer: s.footer,
     logo: s.logo,
     banner: s.banner,
+    textBoxes: s.textBoxes,
     cropEditing: s.cropMode,
     adjustEditing: s.adjustMode,
   })
@@ -206,6 +214,25 @@ export default function Editor() {
     setAfter(b)
     setCropMode(null)
     setAdjustMode(null)
+  }, [])
+
+  /**
+   * Compare ⇄ Single mode toggle — non-destructive. The single media IS the
+   * Before slot; the After slot is only hidden, never cleared, so switching
+   * back restores the comparison exactly. When Before is empty but After has
+   * media, that media is clearly what the user wants to edit → move it into
+   * the single slot.
+   */
+  const onMode = useCallback((m: EditorMode) => {
+    const s = stateRef.current
+    if (m === s.mode) return
+    setCropMode(null)
+    setAdjustMode(null)
+    if (m === 'single' && !s.before.media && s.after.media) {
+      setBefore(s.after)
+      setAfter({ ...EMPTY_SLOT })
+    }
+    setMode(m)
   }, [])
 
   /* ---------------------------- crop actions ---------------------------- */
@@ -357,11 +384,42 @@ export default function Editor() {
     })
   }, [])
 
+  /* -------------------------- text-box actions -------------------------- */
+  const onTextBoxAdd = useCallback(() => {
+    const box = makeTextBox()
+    setTextBoxes((bs) => [...bs, box])
+    setSelectedTextBoxId(box.id)
+    setTab('captions')
+  }, [])
+
+  const onTextBoxPatch = useCallback((id: string, patch: Partial<TextBox>) => {
+    setTextBoxes((bs) => bs.map((b) => (b.id === id ? { ...b, ...patch } : b)))
+  }, [])
+
+  const onTextBoxRemove = useCallback((id: string) => {
+    setTextBoxes((bs) => bs.filter((b) => b.id !== id))
+    setSelectedTextBoxId((sel) => (sel === id ? null : sel))
+  }, [])
+
+  /** Select a box (canvas click or list click) + flash the Captions tab. */
+  const onTextBoxSelect = useCallback((id: string | null) => {
+    setSelectedTextBoxId(id)
+    if (id) {
+      setTab('captions')
+      setFlashCaptions((n) => n + 1)
+    }
+  }, [])
+
   // load the Nastaliq webfont as soon as the template banner is enabled, so
   // the preview swaps to the correct shaping as soon as it arrives
   useEffect(() => {
     if (banner.enabled && banner.mode === 'template') void ensureBannerFonts()
   }, [banner.enabled, banner.mode])
+
+  // same for any text box using the Nastaliq font (reuses the banner loader)
+  useEffect(() => {
+    if (textBoxes.some((b) => b.fontFamily === 'nastaliq')) void ensureBannerFonts()
+  }, [textBoxes])
 
   /* --------------------------- video pool (DOM) -------------------------- */
   useEffect(() => {
@@ -604,7 +662,14 @@ export default function Editor() {
           break
         case 'u':
         case 'U': {
-          const side: Side = !s.before.media ? 'before' : !s.after.media ? 'after' : 'before'
+          const side: Side =
+            s.mode === 'single'
+              ? 'before'
+              : !s.before.media
+                ? 'before'
+                : !s.after.media
+                  ? 'after'
+                  : 'before'
           browseFns.current[side]?.()
           break
         }
@@ -614,7 +679,8 @@ export default function Editor() {
           break
         case 'e':
         case 'E':
-          if (s.before.media && s.after.media) openRenderRef.current()
+          if (s.mode === 'single' ? !!s.before.media : !!(s.before.media && s.after.media))
+            openRenderRef.current()
           break
         default:
           break
@@ -646,7 +712,7 @@ export default function Editor() {
   /* ------------------------------- export -------------------------------- */
   const openRender = useCallback(() => {
     const s = stateRef.current
-    if (!s.before.media || !s.after.media) return
+    if (s.mode === 'single' ? !s.before.media : !s.before.media || !s.after.media) return
     cancelRef.current = false
     setCropMode(null)
     setAdjustMode(null)
@@ -655,11 +721,16 @@ export default function Editor() {
     setRender({ ...IDLE_RENDER, open: true, phase: 'rendering', phaseLabel: 'Preparing…' })
 
     const settings = s.exportSettings
-    const dur = timelineDuration(s.before, s.after, settings)
+    const dur = timelineDuration(s.before, s.after, settings, s.mode)
     const filename = `splitframe-${slugify(projectName)}.${settings.format}`
 
+    // In single mode the preserved After slot must not leak into the export
+    // (audio mix, seeks, source dims) — the exporter sees only the one media.
+    const exportSource = { ...frameSource(s), cropEditing: null, adjustEditing: null }
+    if (s.mode === 'single') exportSource.after = { ...EMPTY_SLOT }
+
     exportVideo({
-      source: { ...frameSource(s), cropEditing: null, adjustEditing: null },
+      source: exportSource,
       settings,
       timelineDur: dur,
       speed: s.transport.speed,
@@ -762,6 +833,8 @@ export default function Editor() {
       tab={tab}
       onTab={setTab}
       flashCaptions={flashCaptions}
+      mode={mode}
+      onMode={onMode}
       header={header}
       footer={footer}
       onHeaderPatch={(p) => setHeader((h) => ({ ...h, ...p }))}
@@ -782,6 +855,12 @@ export default function Editor() {
       onBannerPatch={onBannerPatch}
       onBannerImage={onBannerImage}
       onBannerImageRemove={onBannerImageRemove}
+      textBoxes={textBoxes}
+      selectedTextBoxId={selectedTextBoxId}
+      onTextBoxAdd={onTextBoxAdd}
+      onTextBoxPatch={onTextBoxPatch}
+      onTextBoxRemove={onTextBoxRemove}
+      onTextBoxSelect={onTextBoxSelect}
       before={before}
       after={after}
       onCropMode={onCropMode}
@@ -801,11 +880,16 @@ export default function Editor() {
     <Stage
       canvasRef={canvasRef}
       dims={dims}
+      mode={mode}
       before={before}
       after={after}
       layout={layout}
       logo={logo}
       banner={banner}
+      textBoxes={textBoxes}
+      selectedTextBoxId={selectedTextBoxId}
+      onTextBoxPatch={onTextBoxPatch}
+      onTextBoxSelect={onTextBoxSelect}
       header={header}
       footer={footer}
       transport={transport}
@@ -840,6 +924,8 @@ export default function Editor() {
         status={status}
         canExport={canExport}
         onExport={() => openRenderRef.current()}
+        mode={mode}
+        onMode={onMode}
       />
 
       {/* limited-browser banner */}
@@ -865,6 +951,7 @@ export default function Editor() {
         {/* left rail (desktop) */}
         <aside className="hidden min-h-0 overflow-y-auto border-r border-line bg-surface-1 lg:block">
           <MediaPanel
+            mode={mode}
             before={before}
             after={after}
             onFile={loadFile}
@@ -897,6 +984,7 @@ export default function Editor() {
             </AccordionTrigger>
             <AccordionContent className="p-0">
               <MediaPanel
+                mode={mode}
                 before={before}
                 after={after}
                 onFile={loadFile}

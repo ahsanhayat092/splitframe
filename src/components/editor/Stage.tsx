@@ -22,6 +22,7 @@ import {
 import type {
   BannerState,
   CropRect,
+  EditorMode,
   FooterCaptionState,
   FrameAdjust,
   HeaderCaptionState,
@@ -29,6 +30,7 @@ import type {
   LogoState,
   Side,
   SlotState,
+  TextBox,
   TransportState,
 } from '@/lib/editor/types'
 import {
@@ -50,7 +52,8 @@ import {
   logoRect,
   mediaDrawRect,
   mediaWindowRect,
-  paneRects,
+  slotPaneRect,
+  textBoxRect,
 } from '@/lib/editor/compositor'
 import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -90,6 +93,7 @@ function IconBtn({
 function Transport({
   transport,
   timelineDur,
+  single,
   onTogglePlay,
   onScrub,
   onRestart,
@@ -100,6 +104,8 @@ function Transport({
 }: {
   transport: TransportState
   timelineDur: number
+  /** single-media mode — original audio passes through (no L/R split) */
+  single?: boolean
   onTogglePlay: () => void
   onScrub: (t: number) => void
   onRestart: () => void
@@ -163,7 +169,7 @@ function Transport({
             </span>
           </TooltipTrigger>
           <TooltipContent className="border-line bg-surface-3 font-mono text-xs text-ink-2">
-            Export mix: before → L, after → R
+            {single ? 'Export mix: original audio' : 'Export mix: before → L, after → R'}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -197,6 +203,17 @@ interface BadgeDrag {
   ry: number
   w: number
   h: number
+}
+
+interface TextBoxDrag {
+  id: string
+  pointerId: number
+  startClientX: number
+  startClientY: number
+  /** text-block center (canvas px) at drag start */
+  cx: number
+  cy: number
+  moved: boolean
 }
 
 type CropHandle = 'move' | 'nw' | 'ne' | 'sw' | 'se'
@@ -239,11 +256,16 @@ function snapTo(v: number, targets: number[], range: number): number {
 export default function Stage({
   canvasRef,
   dims,
+  mode = 'compare',
   before,
   after,
   layout,
   logo,
   banner,
+  textBoxes = [],
+  selectedTextBoxId = null,
+  onTextBoxPatch,
+  onTextBoxSelect,
   header,
   footer,
   transport,
@@ -270,11 +292,18 @@ export default function Stage({
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>
   dims: { w: number; h: number }
+  /** 'single' hides the divider/badges — the one media fills the frame */
+  mode?: EditorMode
   before: SlotState
   after: SlotState
   layout: LayoutState
   logo: LogoState
   banner: BannerState
+  /** free text boxes — canvas-level overlays in both modes */
+  textBoxes?: TextBox[]
+  selectedTextBoxId?: string | null
+  onTextBoxPatch: (id: string, patch: Partial<TextBox>) => void
+  onTextBoxSelect: (id: string | null) => void
   header: HeaderCaptionState
   footer: FooterCaptionState
   transport: TransportState
@@ -324,6 +353,7 @@ export default function Stage({
   }, [dims.w, dims.h])
 
   const sx = display.w > 0 ? display.w / dims.w : 1
+  const single = mode === 'single'
   const horizontal = layout.mode !== 'stacked'
 
   const pctFromEvent = useCallback(
@@ -547,6 +577,43 @@ export default function Stage({
     setBannerDrag(false)
   }
 
+  // ---- text box drag / click-to-select ----
+  const textBoxDragState = useRef<TextBoxDrag | null>(null)
+  const [textBoxDragId, setTextBoxDragId] = useState<string | null>(null)
+
+  const onTextBoxDown = (e: ReactPointerEvent<HTMLDivElement>, box: TextBox) => {
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    textBoxDragState.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      cx: (box.x / 100) * dims.w,
+      cy: (box.y / 100) * dims.h,
+      moved: false,
+    }
+    setTextBoxDragId(box.id)
+    onTextBoxSelect(box.id)
+  }
+  const onTextBoxMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const st = textBoxDragState.current
+    if (!st || st.pointerId !== e.pointerId) return
+    const dxCanvas = (e.clientX - st.startClientX) / sx
+    const dyCanvas = (e.clientY - st.startClientY) / sx
+    if (!st.moved && Math.hypot(dxCanvas, dyCanvas) < 4) return
+    st.moved = true
+    onTextBoxPatch(st.id, {
+      x: Math.round(clampNum(((st.cx + dxCanvas) / dims.w) * 100, 1, 99) * 10) / 10,
+      y: Math.round(clampNum(((st.cy + dyCanvas) / dims.h) * 100, 1, 99) * 10) / 10,
+    })
+  }
+  const onTextBoxUp = () => {
+    textBoxDragState.current = null
+    setTextBoxDragId(null)
+  }
+
   // ---- crop mode ----
   const cropDragState = useRef<CropDrag | null>(null)
   const cropSlot = cropMode === 'before' ? before : cropMode === 'after' ? after : null
@@ -570,7 +637,7 @@ export default function Stage({
     return () => window.removeEventListener('keydown', onKey)
   }, [cropMode, onCropMode])
 
-  const cropPane = cropMode && cropMedia ? paneRects(layout, dims.w, dims.h)[cropMode] : null
+  const cropPane = cropMode && cropMedia ? slotPaneRect(mode, layout, dims.w, dims.h, cropMode) : null
   // crop mode renders the FULL source with contain fit (see compositor fitFor)
   const cropDisplay =
     cropMode && cropMedia && cropPane
@@ -652,7 +719,7 @@ export default function Stage({
   const [panDrag, setPanDrag] = useState(false)
   const adjustSlot = adjustMode === 'before' ? before : adjustMode === 'after' ? after : null
   const adjustMedia = adjustSlot?.media ?? null
-  const adjustPane = adjustMode && adjustMedia ? paneRects(layout, dims.w, dims.h)[adjustMode] : null
+  const adjustPane = adjustMode && adjustMedia ? slotPaneRect(mode, layout, dims.w, dims.h, adjustMode) : null
   // latest-adjust mirror so rapid wheel events accumulate within one frame
   const adjustLiveRef = useRef<FrameAdjust | null>(null)
   useEffect(() => {
@@ -790,11 +857,12 @@ export default function Stage({
     else void el.requestFullscreen?.().catch(() => undefined)
   }
 
-  const bothEmpty = !before.media && !after.media
+  const bothEmpty = single ? !before.media : !before.media && !after.media
   const lRect = logo.img ? logoRect(logo, dims.w, dims.h) : null
   const bRect = banner.enabled ? bannerRect(banner, dims.w, dims.h) : null
   const capRects = captionHitRects(header, footer, dims.w, dims.h)
   const badges = badgeRects(layout, dims.w, dims.h)
+  const textBoxOverlays = textBoxes.map((box) => ({ box, rect: textBoxRect(box, dims.w, dims.h) }))
   const overlaysEnabled = !bothEmpty && !cropMode && !adjustMode
 
   // crop overlay geometry (screen px)
@@ -819,8 +887,8 @@ export default function Stage({
         className={cn(
           'relative select-none overflow-hidden rounded-xl border border-line bg-surface-0 transition-shadow duration-300',
           transport.playing && 'shadow-[0_0_24px_rgba(184,240,74,0.22)]',
-          cropMode && (cropMode === 'before' ? 'border-before/60' : 'border-after/60'),
-          adjustMode && (adjustMode === 'before' ? 'border-before/60' : 'border-after/60'),
+          cropMode && (cropMode === 'before' && !single ? 'border-before/60' : 'border-after/60'),
+          adjustMode && (adjustMode === 'before' && !single ? 'border-before/60' : 'border-after/60'),
         )}
         style={{
           width: display.w || undefined,
@@ -847,7 +915,9 @@ export default function Stage({
               className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-0/70"
             >
               <img src="/empty-state.svg" alt="" className="w-[120px] opacity-90" />
-              <p className="text-sm text-ink-2">Drop media on the left to start</p>
+              <p className="text-sm text-ink-2">
+                {single ? 'Drop a video or image to start editing' : 'Drop media on the left to start'}
+              </p>
               <p className="font-mono text-xs text-ink-3">or press U to upload</p>
             </motion.div>
           )}
@@ -899,8 +969,8 @@ export default function Stage({
           />
         )}
 
-        {/* badge drag overlays */}
-        {overlaysEnabled && badges.before && (
+        {/* badge drag overlays (compare mode only) */}
+        {overlaysEnabled && !single && badges.before && (
           <div
             role="presentation"
             aria-label="Move Before badge"
@@ -921,7 +991,7 @@ export default function Stage({
             }}
           />
         )}
-        {overlaysEnabled && badges.after && (
+        {overlaysEnabled && !single && badges.after && (
           <div
             role="presentation"
             aria-label="Move After badge"
@@ -942,6 +1012,39 @@ export default function Stage({
             }}
           />
         )}
+
+        {/* text box drag / click-to-select overlays */}
+        {overlaysEnabled &&
+          textBoxOverlays.map(({ box, rect }) => {
+            const pad = Math.max(6, dims.h * 0.01) * sx
+            const selected = selectedTextBoxId === box.id
+            const dragging = textBoxDragId === box.id
+            return (
+              <div
+                key={box.id}
+                role="button"
+                tabIndex={-1}
+                aria-label={`Move text box "${box.text.split('\n')[0] || 'empty'}"`}
+                onPointerDown={(e) => onTextBoxDown(e, box)}
+                onPointerMove={onTextBoxMove}
+                onPointerUp={onTextBoxUp}
+                onPointerCancel={onTextBoxUp}
+                className={cn(
+                  'absolute z-[14] touch-none rounded-md border transition-colors',
+                  dragging ? 'cursor-grabbing' : 'cursor-grab',
+                  selected || dragging
+                    ? 'border-dashed border-after/60'
+                    : 'border-transparent hover:border-dashed hover:border-ink/30',
+                )}
+                style={{
+                  left: Math.max(0, rect.x * sx - pad),
+                  top: Math.max(0, rect.y * sx - pad),
+                  width: rect.w * sx + pad * 2,
+                  height: rect.h * sx + pad * 2,
+                }}
+              />
+            )
+          })}
 
         {/* logo interactive overlay */}
         {overlaysEnabled && lRect && (
@@ -1020,8 +1123,8 @@ export default function Stage({
           </div>
         )}
 
-        {/* divider handle */}
-        {overlaysEnabled && (
+        {/* divider handle (compare mode only) */}
+        {overlaysEnabled && !single && (
           <div
             role="slider"
             aria-label="Divider position"
@@ -1111,7 +1214,7 @@ export default function Stage({
               onPointerUp={onCropUp}
               className={cn(
                 'absolute cursor-move touch-none border-2 bg-transparent',
-                cropMode === 'before' ? 'border-before' : 'border-after',
+                cropMode === 'before' && !single ? 'border-before' : 'border-after',
               )}
               style={{
                 left: cropScreen.x,
@@ -1141,7 +1244,7 @@ export default function Stage({
                     'absolute h-6 w-6 touch-none rounded-full border-2 bg-surface-3',
                     pos,
                     cursor,
-                    cropMode === 'before' ? 'border-before' : 'border-after',
+                    cropMode === 'before' && !single ? 'border-before' : 'border-after',
                   )}
                 />
               ))}
@@ -1160,12 +1263,12 @@ export default function Stage({
                 <span
                   className={cn(
                     'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-                    cropMode === 'before'
+                    cropMode === 'before' && !single
                       ? 'border-before/60 bg-before-dim text-before'
                       : 'border-after/60 bg-after-dim text-after',
                   )}
                 >
-                  CROP {cropMode === 'before' ? 'BEFORE' : 'AFTER'}
+                  CROP {single ? 'MEDIA' : cropMode === 'before' ? 'BEFORE' : 'AFTER'}
                 </span>
                 {!isFullCrop(cropSlot?.crop ?? null) && (
                   <button
@@ -1189,7 +1292,7 @@ export default function Stage({
                   onClick={applyCrop}
                   className={cn(
                     'flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-[0.97]',
-                    cropMode === 'before'
+                    cropMode === 'before' && !single
                       ? 'bg-before text-surface-0 hover:shadow-[0_0_12px_rgba(76,201,240,0.4)]'
                       : 'bg-after text-after-ink hover:shadow-[0_0_12px_rgba(184,240,74,0.4)]',
                   )}
@@ -1217,7 +1320,7 @@ export default function Stage({
               className={cn(
                 'pointer-events-auto absolute touch-none border-2',
                 panDrag ? 'cursor-grabbing' : 'cursor-grab',
-                adjustMode === 'before' ? 'border-before' : 'border-after',
+                adjustMode === 'before' && !single ? 'border-before' : 'border-after',
               )}
               style={{
                 left: adjustPane.x * sx,
@@ -1239,12 +1342,12 @@ export default function Stage({
                 <span
                   className={cn(
                     'rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-                    adjustMode === 'before'
+                    adjustMode === 'before' && !single
                       ? 'border-before/60 bg-before-dim text-before'
                       : 'border-after/60 bg-after-dim text-after',
                   )}
                 >
-                  FRAME {adjustMode === 'before' ? 'BEFORE' : 'AFTER'}
+                  FRAME {single ? 'MEDIA' : adjustMode === 'before' ? 'BEFORE' : 'AFTER'}
                 </span>
                 <Slider
                   min={ZOOM_MIN}
@@ -1272,7 +1375,7 @@ export default function Stage({
                   onClick={() => onAdjustMode(null)}
                   className={cn(
                     'flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-[0.97]',
-                    adjustMode === 'before'
+                    adjustMode === 'before' && !single
                       ? 'bg-before text-surface-0 hover:shadow-[0_0_12px_rgba(76,201,240,0.4)]'
                       : 'bg-after text-after-ink hover:shadow-[0_0_12px_rgba(184,240,74,0.4)]',
                   )}
@@ -1291,6 +1394,7 @@ export default function Stage({
         <Transport
           transport={transport}
           timelineDur={timelineDur}
+          single={single}
           onTogglePlay={onTogglePlay}
           onScrub={onScrub}
           onRestart={onRestart}
